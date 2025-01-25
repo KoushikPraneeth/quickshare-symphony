@@ -6,6 +6,8 @@ interface PeerConnection {
 class WebRTCService {
   private static instance: WebRTCService;
   private connections: Map<string, PeerConnection> = new Map();
+  private ws: WebSocket | null = null;
+  
   private configuration = {
     iceServers: [
       { urls: 'stun:stun.l.google.com:19302' },
@@ -13,11 +15,88 @@ class WebRTCService {
     ],
   };
 
+  private constructor() {
+    this.connectToSignalingServer();
+  }
+
   static getInstance(): WebRTCService {
     if (!WebRTCService.instance) {
       WebRTCService.instance = new WebRTCService();
     }
     return WebRTCService.instance;
+  }
+
+  private connectToSignalingServer() {
+    this.ws = new WebSocket('ws://localhost:8080');
+    
+    this.ws.onopen = () => {
+      console.log('Connected to signaling server');
+    };
+
+    this.ws.onmessage = async (event) => {
+      const message = JSON.parse(event.data);
+      const { type, code, data } = message;
+
+      switch (type) {
+        case 'offer':
+          await this.handleOffer(code, data);
+          break;
+        case 'answer':
+          await this.handleAnswer(code, data);
+          break;
+        case 'ice-candidate':
+          await this.handleIceCandidate(code, data);
+          break;
+      }
+    };
+
+    this.ws.onerror = (error) => {
+      console.error('WebSocket error:', error);
+    };
+  }
+
+  private async handleOffer(code: string, offer: RTCSessionDescriptionInit) {
+    const peerConnection = new RTCPeerConnection(this.configuration);
+    
+    peerConnection.onicecandidate = (event) => {
+      if (event.candidate) {
+        this.sendSignalingMessage(code, 'ice-candidate', event.candidate);
+      }
+    };
+
+    peerConnection.ondatachannel = (event) => {
+      this.setupDataChannel(event.channel);
+      this.connections.set(code, { 
+        connection: peerConnection, 
+        dataChannel: event.channel 
+      });
+    };
+
+    await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+    const answer = await peerConnection.createAnswer();
+    await peerConnection.setLocalDescription(answer);
+
+    this.sendSignalingMessage(code, 'answer', answer);
+  }
+
+  private async handleAnswer(code: string, answer: RTCSessionDescriptionInit) {
+    const connection = this.connections.get(code);
+    if (connection) {
+      await connection.connection.setRemoteDescription(new RTCSessionDescription(answer));
+    }
+  }
+
+  private async handleIceCandidate(code: string, candidate: RTCIceCandidateInit) {
+    const connection = this.connections.get(code);
+    if (connection) {
+      await connection.connection.addIceCandidate(new RTCIceCandidate(candidate));
+    }
+  }
+
+  private sendSignalingMessage(code: string, type: string, data: any) {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({ type, code, data }));
+    }
   }
 
   async createConnection(code: string): Promise<void> {
@@ -30,35 +109,15 @@ class WebRTCService {
 
     peerConnection.onicecandidate = (event) => {
       if (event.candidate) {
-        console.log('New ICE candidate:', event.candidate);
-        // Here you would send the candidate to the other peer
+        this.sendSignalingMessage(code, 'ice-candidate', event.candidate);
       }
     };
+
+    const offer = await peerConnection.createOffer();
+    await peerConnection.setLocalDescription(offer);
+    this.sendSignalingMessage(code, 'offer', offer);
 
     console.log('Connection created successfully');
-  }
-
-  async joinConnection(code: string): Promise<void> {
-    console.log('Joining WebRTC connection with code:', code);
-    const peerConnection = new RTCPeerConnection(this.configuration);
-    
-    peerConnection.ondatachannel = (event) => {
-      console.log('Received data channel');
-      this.setupDataChannel(event.channel);
-      this.connections.set(code, { 
-        connection: peerConnection, 
-        dataChannel: event.channel 
-      });
-    };
-
-    peerConnection.onicecandidate = (event) => {
-      if (event.candidate) {
-        console.log('New ICE candidate:', event.candidate);
-        // Here you would send the candidate to the other peer
-      }
-    };
-
-    console.log('Successfully joined connection');
   }
 
   private setupDataChannel(dataChannel: RTCDataChannel): void {
@@ -72,7 +131,6 @@ class WebRTCService {
 
     dataChannel.onmessage = (event) => {
       console.log('Received message:', event.data);
-      // Handle incoming data
     };
   }
 
