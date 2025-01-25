@@ -1,4 +1,4 @@
-import { WebSocketServer } from 'ws';
+import { WebSocketServer, WebSocket } from 'ws';
 
 interface SignalingMessage {
   type: 'offer' | 'answer' | 'ice-candidate';
@@ -9,7 +9,7 @@ interface SignalingMessage {
 const wss = new WebSocketServer({ port: 8080 });
 const clients = new Map<string, WebSocket>();
 
-wss.on('connection', (ws) => {
+wss.on('connection', (ws: WebSocket) => {
   console.log('New client connected');
 
   ws.on('message', (message: string) => {
