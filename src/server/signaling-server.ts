@@ -1,4 +1,4 @@
-import WebSocket from 'ws';
+import { WebSocketServer } from 'ws';
 
 interface SignalingMessage {
   type: 'offer' | 'answer' | 'ice-candidate';
@@ -6,15 +6,15 @@ interface SignalingMessage {
   data: any;
 }
 
-const wss = new WebSocket.Server({ port: 8080 });
+const wss = new WebSocketServer({ port: 8080 });
 const clients = new Map<string, WebSocket>();
 
-wss.on('connection', (ws: WebSocket) => {
+wss.on('connection', (ws) => {
   console.log('New client connected');
 
   ws.on('message', (message: string) => {
     try {
-      const parsedMessage: SignalingMessage = JSON.parse(message);
+      const parsedMessage: SignalingMessage = JSON.parse(message.toString());
       console.log('Received message:', parsedMessage.type, 'for code:', parsedMessage.code);
 
       // Store the client connection with their code

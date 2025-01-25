@@ -120,6 +120,20 @@ class WebRTCService {
     console.log('Connection created successfully');
   }
 
+  async joinConnection(code: string): Promise<void> {
+    console.log('Joining WebRTC connection for code:', code);
+    const peerConnection = new RTCPeerConnection(this.configuration);
+    
+    peerConnection.onicecandidate = (event) => {
+      if (event.candidate) {
+        this.sendSignalingMessage(code, 'ice-candidate', event.candidate);
+      }
+    };
+
+    this.connections.set(code, { connection: peerConnection });
+    console.log('Connection joined successfully');
+  }
+
   private setupDataChannel(dataChannel: RTCDataChannel): void {
     dataChannel.onopen = () => {
       console.log('Data channel opened');
