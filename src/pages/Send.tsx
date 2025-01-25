@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -8,6 +8,7 @@ import { Progress } from '@/components/ui/progress';
 import { motion } from 'framer-motion';
 import { FileSplitter } from '@/utils/FileSplitter';
 import { useToast } from '@/components/ui/use-toast';
+import WebRTCService from '@/utils/WebRTCService';
 
 const Send = () => {
   const [file, setFile] = useState<File | null>(null);
@@ -15,6 +16,15 @@ const Send = () => {
   const [code, setCode] = useState<string>('');
   const [chunks, setChunks] = useState<Blob[]>([]);
   const { toast } = useToast();
+  const webRTCService = WebRTCService.getInstance();
+
+  useEffect(() => {
+    return () => {
+      if (code) {
+        webRTCService.closeConnection(code);
+      }
+    };
+  }, [code]);
 
   const handleFileSelect = async (selectedFile: File) => {
     setFile(selectedFile);
@@ -30,12 +40,27 @@ const Send = () => {
       const randomCode = Math.random().toString(36).substring(2, 8).toUpperCase();
       setCode(randomCode);
       
+      // Create WebRTC connection
+      await webRTCService.createConnection(randomCode);
+      
       // Update progress as chunks are processed
       let currentProgress = 0;
-      const progressInterval = setInterval(() => {
-        currentProgress = Math.min(100, currentProgress + (100 / fileChunks.length));
-        setProgress(currentProgress);
-        if (currentProgress >= 100) {
+      const progressInterval = setInterval(async () => {
+        if (currentProgress < 100) {
+          currentProgress = Math.min(100, currentProgress + 5);
+          setProgress(currentProgress);
+          
+          // Simulate sending chunks via WebRTC
+          if (fileChunks[Math.floor(currentProgress / 5)]) {
+            try {
+              const chunk = fileChunks[Math.floor(currentProgress / 5)];
+              const buffer = await chunk.arrayBuffer();
+              await webRTCService.sendData(randomCode, buffer);
+            } catch (error) {
+              console.error('Error sending chunk:', error);
+            }
+          }
+        } else {
           clearInterval(progressInterval);
           toast({
             title: "File ready to share",
@@ -44,7 +69,7 @@ const Send = () => {
         }
       }, 200);
     } catch (error) {
-      console.error('Error splitting file:', error);
+      console.error('Error preparing file:', error);
       toast({
         title: "Error preparing file",
         description: "There was an error preparing your file for transfer",

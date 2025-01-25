@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -7,6 +7,7 @@ import { Progress } from '@/components/ui/progress';
 import { motion } from 'framer-motion';
 import { FileAssembler } from '@/utils/FileAssembler';
 import { useToast } from '@/components/ui/use-toast';
+import WebRTCService from '@/utils/WebRTCService';
 
 const Receive = () => {
   const [code, setCode] = useState('');
@@ -14,6 +15,15 @@ const Receive = () => {
   const [progress, setProgress] = useState(0);
   const [receivedChunks, setReceivedChunks] = useState<Blob[]>([]);
   const { toast } = useToast();
+  const webRTCService = WebRTCService.getInstance();
+
+  useEffect(() => {
+    return () => {
+      if (code) {
+        webRTCService.closeConnection(code);
+      }
+    };
+  }, [code]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -21,7 +31,9 @@ const Receive = () => {
     setProgress(0);
     
     try {
-      // Simulate receiving chunks for now
+      await webRTCService.joinConnection(code);
+      
+      // Simulate receiving chunks for demonstration
       let currentProgress = 0;
       const interval = setInterval(async () => {
         currentProgress += 5;
@@ -34,16 +46,6 @@ const Receive = () => {
             console.log('Assembling chunks...');
             const finalFile = await FileAssembler.assembleChunks(receivedChunks);
             console.log('File assembled successfully');
-            
-            // Create a download link
-            const url = URL.createObjectURL(finalFile);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = 'downloaded-file'; // This will be replaced with actual filename
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
             
             toast({
               title: "Download complete",
