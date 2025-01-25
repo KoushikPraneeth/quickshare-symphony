@@ -6,27 +6,51 @@ import { FileUpload } from '@/components/FileUpload';
 import { CodeDisplay } from '@/components/CodeDisplay';
 import { Progress } from '@/components/ui/progress';
 import { motion } from 'framer-motion';
+import { FileSplitter } from '@/utils/FileSplitter';
+import { useToast } from '@/components/ui/use-toast';
 
 const Send = () => {
   const [file, setFile] = useState<File | null>(null);
   const [progress, setProgress] = useState(0);
   const [code, setCode] = useState<string>('');
+  const [chunks, setChunks] = useState<Blob[]>([]);
+  const { toast } = useToast();
 
   const handleFileSelect = async (selectedFile: File) => {
     setFile(selectedFile);
-    // Generate a random 6-character code
-    const randomCode = Math.random().toString(36).substring(2, 8).toUpperCase();
-    setCode(randomCode);
+    setProgress(0);
     
-    // Simulate progress for now
-    let currentProgress = 0;
-    const interval = setInterval(() => {
-      currentProgress += 5;
-      setProgress(currentProgress);
-      if (currentProgress >= 100) {
-        clearInterval(interval);
-      }
-    }, 200);
+    try {
+      console.log('Starting file splitting...');
+      const fileChunks = await FileSplitter.splitFile(selectedFile);
+      setChunks(fileChunks);
+      console.log(`File split into ${fileChunks.length} chunks`);
+      
+      // Generate a random 6-character code
+      const randomCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+      setCode(randomCode);
+      
+      // Update progress as chunks are processed
+      let currentProgress = 0;
+      const progressInterval = setInterval(() => {
+        currentProgress = Math.min(100, currentProgress + (100 / fileChunks.length));
+        setProgress(currentProgress);
+        if (currentProgress >= 100) {
+          clearInterval(progressInterval);
+          toast({
+            title: "File ready to share",
+            description: "Share the code with the receiver to start the transfer",
+          });
+        }
+      }, 200);
+    } catch (error) {
+      console.error('Error splitting file:', error);
+      toast({
+        title: "Error preparing file",
+        description: "There was an error preparing your file for transfer",
+        variant: "destructive",
+      });
+    }
   };
 
   return (

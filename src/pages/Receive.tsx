@@ -5,25 +5,68 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Progress } from '@/components/ui/progress';
 import { motion } from 'framer-motion';
+import { FileAssembler } from '@/utils/FileAssembler';
+import { useToast } from '@/components/ui/use-toast';
 
 const Receive = () => {
   const [code, setCode] = useState('');
   const [isConnecting, setIsConnecting] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [receivedChunks, setReceivedChunks] = useState<Blob[]>([]);
+  const { toast } = useToast();
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsConnecting(true);
+    setProgress(0);
     
-    // Simulate progress for now
-    let currentProgress = 0;
-    const interval = setInterval(() => {
-      currentProgress += 5;
-      setProgress(currentProgress);
-      if (currentProgress >= 100) {
-        clearInterval(interval);
-      }
-    }, 200);
+    try {
+      // Simulate receiving chunks for now
+      let currentProgress = 0;
+      const interval = setInterval(async () => {
+        currentProgress += 5;
+        setProgress(currentProgress);
+        
+        if (currentProgress >= 100) {
+          clearInterval(interval);
+          
+          try {
+            console.log('Assembling chunks...');
+            const finalFile = await FileAssembler.assembleChunks(receivedChunks);
+            console.log('File assembled successfully');
+            
+            // Create a download link
+            const url = URL.createObjectURL(finalFile);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'downloaded-file'; // This will be replaced with actual filename
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            
+            toast({
+              title: "Download complete",
+              description: "Your file has been downloaded successfully",
+            });
+          } catch (error) {
+            console.error('Error assembling file:', error);
+            toast({
+              title: "Error downloading file",
+              description: "There was an error assembling the file chunks",
+              variant: "destructive",
+            });
+          }
+        }
+      }, 200);
+    } catch (error) {
+      console.error('Error receiving file:', error);
+      toast({
+        title: "Error receiving file",
+        description: "There was an error receiving the file chunks",
+        variant: "destructive",
+      });
+    }
   };
 
   return (
