@@ -9,6 +9,8 @@ class WebRTCService {
   private connections: Map<string, PeerConnection> = new Map();
   private ws: WebSocket | null = null;
   private messageCallbacks: Map<string, (data: ArrayBuffer) => void> = new Map();
+  private reconnectAttempts = 0;
+  private maxReconnectAttempts = 5;
   
   private configuration = {
     iceServers: [
@@ -29,32 +31,60 @@ class WebRTCService {
   }
 
   private connectToSignalingServer() {
-    this.ws = new WebSocket('ws://localhost:8080');
+    console.log('Attempting to connect to signaling server...');
     
-    this.ws.onopen = () => {
-      console.log('Connected to signaling server');
-    };
+    try {
+      this.ws = new WebSocket('ws://localhost:8080');
+      
+      this.ws.onopen = () => {
+        console.log('Connected to signaling server successfully');
+        this.reconnectAttempts = 0; // Reset attempts on successful connection
+      };
 
-    this.ws.onmessage = async (event) => {
-      const message = JSON.parse(event.data);
-      const { type, code, data } = message;
+      this.ws.onmessage = async (event) => {
+        const message = JSON.parse(event.data);
+        const { type, code, data } = message;
+        console.log('Received signaling message:', type, 'for code:', code);
 
-      switch (type) {
-        case 'offer':
-          await this.handleOffer(code, data);
-          break;
-        case 'answer':
-          await this.handleAnswer(code, data);
-          break;
-        case 'ice-candidate':
-          await this.handleIceCandidate(code, data);
-          break;
-      }
-    };
+        switch (type) {
+          case 'offer':
+            await this.handleOffer(code, data);
+            break;
+          case 'answer':
+            await this.handleAnswer(code, data);
+            break;
+          case 'ice-candidate':
+            await this.handleIceCandidate(code, data);
+            break;
+        }
+      };
 
-    this.ws.onerror = (error) => {
-      console.error('WebSocket error:', error);
-    };
+      this.ws.onerror = (error) => {
+        console.error('WebSocket error:', error);
+        this.handleConnectionError();
+      };
+
+      this.ws.onclose = () => {
+        console.log('WebSocket connection closed');
+        this.handleConnectionError();
+      };
+
+    } catch (error) {
+      console.error('Error creating WebSocket connection:', error);
+      this.handleConnectionError();
+    }
+  }
+
+  private handleConnectionError() {
+    if (this.reconnectAttempts < this.maxReconnectAttempts) {
+      this.reconnectAttempts++;
+      console.log(`Attempting to reconnect (${this.reconnectAttempts}/${this.maxReconnectAttempts})...`);
+      setTimeout(() => {
+        this.connectToSignalingServer();
+      }, 2000 * this.reconnectAttempts); // Exponential backoff
+    } else {
+      console.error('Max reconnection attempts reached. Please check if the signaling server is running.');
+    }
   }
 
   registerMessageCallback(code: string, callback: (data: ArrayBuffer) => void) {
@@ -113,8 +143,11 @@ class WebRTCService {
   }
 
   private sendSignalingMessage(code: string, type: string, data: any) {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+    if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify({ type, code, data }));
+    } else {
+      console.error('WebSocket is not connected. Cannot send signaling message.');
+      this.handleConnectionError();
     }
   }
 
