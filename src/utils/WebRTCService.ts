@@ -1,6 +1,7 @@
 interface PeerConnection {
   connection: RTCPeerConnection;
   dataChannel?: RTCDataChannel;
+  isReady?: boolean;
 }
 
 class WebRTCService {
@@ -56,6 +57,7 @@ class WebRTCService {
   }
 
   private async handleOffer(code: string, offer: RTCSessionDescriptionInit) {
+    console.log('Handling offer for code:', code);
     const peerConnection = new RTCPeerConnection(this.configuration);
     
     peerConnection.onicecandidate = (event) => {
@@ -65,10 +67,13 @@ class WebRTCService {
     };
 
     peerConnection.ondatachannel = (event) => {
-      this.setupDataChannel(event.channel);
+      console.log('Data channel received on receiver side');
+      const dataChannel = event.channel;
+      this.setupDataChannel(dataChannel);
       this.connections.set(code, { 
         connection: peerConnection, 
-        dataChannel: event.channel 
+        dataChannel: dataChannel,
+        isReady: false
       });
     };
 
@@ -77,19 +82,24 @@ class WebRTCService {
     await peerConnection.setLocalDescription(answer);
 
     this.sendSignalingMessage(code, 'answer', answer);
+    console.log('Answer sent for code:', code);
   }
 
   private async handleAnswer(code: string, answer: RTCSessionDescriptionInit) {
+    console.log('Handling answer for code:', code);
     const connection = this.connections.get(code);
     if (connection) {
       await connection.connection.setRemoteDescription(new RTCSessionDescription(answer));
+      console.log('Remote description set for code:', code);
     }
   }
 
   private async handleIceCandidate(code: string, candidate: RTCIceCandidateInit) {
+    console.log('Handling ICE candidate for code:', code);
     const connection = this.connections.get(code);
     if (connection) {
       await connection.connection.addIceCandidate(new RTCIceCandidate(candidate));
+      console.log('ICE candidate added for code:', code);
     }
   }
 
@@ -105,7 +115,11 @@ class WebRTCService {
     const dataChannel = peerConnection.createDataChannel('fileTransfer');
     
     this.setupDataChannel(dataChannel);
-    this.connections.set(code, { connection: peerConnection, dataChannel });
+    this.connections.set(code, { 
+      connection: peerConnection, 
+      dataChannel,
+      isReady: false 
+    });
 
     peerConnection.onicecandidate = (event) => {
       if (event.candidate) {
@@ -130,13 +144,25 @@ class WebRTCService {
       }
     };
 
-    this.connections.set(code, { connection: peerConnection });
+    this.connections.set(code, { 
+      connection: peerConnection,
+      isReady: false
+    });
     console.log('Connection joined successfully');
   }
 
   private setupDataChannel(dataChannel: RTCDataChannel): void {
+    console.log('Setting up data channel');
+    
     dataChannel.onopen = () => {
       console.log('Data channel opened');
+      const connection = Array.from(this.connections.entries())
+        .find(([_, conn]) => conn.dataChannel === dataChannel);
+      if (connection) {
+        const [code, conn] = connection;
+        conn.isReady = true;
+        console.log('Data channel ready for code:', code);
+      }
     };
 
     dataChannel.onclose = () => {
@@ -144,7 +170,7 @@ class WebRTCService {
     };
 
     dataChannel.onmessage = (event) => {
-      console.log('Received message:', event.data);
+      console.log('Received chunk data, size:', event.data.size);
     };
   }
 
@@ -154,12 +180,25 @@ class WebRTCService {
       throw new Error('No data channel available');
     }
 
+    if (!connection.isReady || connection.dataChannel.readyState !== 'open') {
+      console.log('Waiting for data channel to be ready...');
+      await new Promise<void>((resolve) => {
+        const checkReady = setInterval(() => {
+          if (connection.isReady && connection.dataChannel?.readyState === 'open') {
+            clearInterval(checkReady);
+            resolve();
+          }
+        }, 100);
+      });
+    }
+
     const CHUNK_SIZE = 16384; // 16KB chunks
     let offset = 0;
 
     while (offset < data.byteLength) {
       const chunk = data.slice(offset, offset + CHUNK_SIZE);
       connection.dataChannel.send(chunk);
+      console.log(`Sent chunk: ${offset}-${offset + chunk.byteLength} of ${data.byteLength}`);
       offset += CHUNK_SIZE;
     }
   }
@@ -172,6 +211,7 @@ class WebRTCService {
       }
       connection.connection.close();
       this.connections.delete(code);
+      console.log('Connection closed for code:', code);
     }
   }
 }
