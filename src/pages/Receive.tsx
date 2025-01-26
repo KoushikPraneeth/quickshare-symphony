@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Progress } from '@/components/ui/progress';
 import { motion } from 'framer-motion';
 import { FileAssembler } from '@/utils/FileAssembler';
-import { useToast } from '@/components/ui/use-toast';
+import { useToast } from '@/hooks/use-toast';
 import WebRTCService from '@/utils/WebRTCService';
 
 const Receive = () => {
@@ -20,32 +20,48 @@ const Receive = () => {
   useEffect(() => {
     return () => {
       if (code) {
+        webRTCService.unregisterMessageCallback(code);
         webRTCService.closeConnection(code);
       }
     };
   }, [code]);
 
+  const handleChunkReceived = (data: ArrayBuffer) => {
+    const blob = new Blob([data]);
+    setReceivedChunks(prev => [...prev, blob]);
+    // Update progress based on chunk size
+    setProgress(prev => Math.min(prev + 10, 100));
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsConnecting(true);
     setProgress(0);
+    setReceivedChunks([]);
     
     try {
+      webRTCService.registerMessageCallback(code, handleChunkReceived);
       await webRTCService.joinConnection(code);
       
-      // Simulate receiving chunks for demonstration
-      let currentProgress = 0;
-      const interval = setInterval(async () => {
-        currentProgress += 5;
-        setProgress(currentProgress);
-        
-        if (currentProgress >= 100) {
-          clearInterval(interval);
+      // Start monitoring chunks
+      const checkComplete = setInterval(async () => {
+        if (progress >= 100) {
+          clearInterval(checkComplete);
           
           try {
-            console.log('Assembling chunks...');
+            console.log('Assembling chunks...', receivedChunks.length);
             const finalFile = await FileAssembler.assembleChunks(receivedChunks);
             console.log('File assembled successfully');
+            
+            // Create download link
+            const url = URL.createObjectURL(finalFile);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'received-file';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
             
             toast({
               title: "Download complete",
@@ -60,7 +76,7 @@ const Receive = () => {
             });
           }
         }
-      }, 200);
+      }, 1000);
     } catch (error) {
       console.error('Error receiving file:', error);
       toast({

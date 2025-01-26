@@ -8,6 +8,7 @@ class WebRTCService {
   private static instance: WebRTCService;
   private connections: Map<string, PeerConnection> = new Map();
   private ws: WebSocket | null = null;
+  private messageCallbacks: Map<string, (data: ArrayBuffer) => void> = new Map();
   
   private configuration = {
     iceServers: [
@@ -54,6 +55,14 @@ class WebRTCService {
     this.ws.onerror = (error) => {
       console.error('WebSocket error:', error);
     };
+  }
+
+  registerMessageCallback(code: string, callback: (data: ArrayBuffer) => void) {
+    this.messageCallbacks.set(code, callback);
+  }
+
+  unregisterMessageCallback(code: string) {
+    this.messageCallbacks.delete(code);
   }
 
   private async handleOffer(code: string, offer: RTCSessionDescriptionInit) {
@@ -171,6 +180,16 @@ class WebRTCService {
 
     dataChannel.onmessage = (event) => {
       console.log('Received chunk data, size:', event.data.size);
+      const connection = Array.from(this.connections.entries())
+        .find(([_, conn]) => conn.dataChannel === dataChannel);
+      
+      if (connection) {
+        const [code] = connection;
+        const callback = this.messageCallbacks.get(code);
+        if (callback && event.data instanceof ArrayBuffer) {
+          callback(event.data);
+        }
+      }
     };
   }
 
