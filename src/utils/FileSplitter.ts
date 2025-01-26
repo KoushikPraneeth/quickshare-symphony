@@ -15,12 +15,6 @@ export class FileSplitter {
         const chunks: Blob[] = [];
 
         try {
-            // Create a directory to store chunks
-            const dirHandle = await window.showDirectoryPicker({
-                mode: 'readwrite',
-                startIn: 'downloads'
-            });
-
             for (let i = 0; i < totalChunks; i++) {
                 const start = i * this.CHUNK_SIZE;
                 const end = Math.min(start + this.CHUNK_SIZE, file.size);
@@ -41,7 +35,7 @@ export class FileSplitter {
                 ]);
                 
                 chunks.push(chunk);
-                await this.writeChunkToDisk(dirHandle, chunk, i);
+                console.log(`Chunk ${i + 1}/${totalChunks} created`);
             }
 
             console.log(`File split into ${chunks.length} chunks`);
@@ -57,19 +51,5 @@ export class FileSplitter {
         const hash = await crypto.subtle.digest('SHA-256', buffer);
         return Array.from(new Uint8Array(hash))
             .map(b => b.toString(16).padStart(2, '0')).join('');
-    }
-
-    private static async writeChunkToDisk(
-        dirHandle: FileSystemDirectoryHandle,
-        chunk: Blob,
-        index: number
-    ): Promise<void> {
-        const fileHandle = await dirHandle.getFileHandle(
-            `chunk_${index.toString().padStart(5, '0')}.sugarcane`,
-            { create: true }
-        );
-        const writable = await fileHandle.createWritable();
-        await writable.write(chunk);
-        await writable.close();
     }
 }
