@@ -1,7 +1,7 @@
 import { WebSocketManager } from './webrtc/WebSocketManager';
 import { DataChannelManager } from './webrtc/DataChannelManager';
 import { PeerConnectionManager } from './webrtc/PeerConnectionManager';
-import { toast } from '@/components/ui/use-toast';
+import { toast } from '@/hooks/use-toast';
 
 class WebRTCService {
   private static instance: WebRTCService;
@@ -110,6 +110,37 @@ class WebRTCService {
       this.webSocketManager.send({ type: 'offer', code, data: offer });
     } catch (error) {
       console.error('Error creating connection:', error);
+      throw error;
+    }
+  }
+
+  async joinConnection(code: string): Promise<void> {
+    console.log('Joining connection with code:', code);
+    try {
+      const peerConnection = new PeerConnectionManager(this.configuration);
+      this.peerConnections.set(code, peerConnection);
+
+      peerConnection.onIceCandidate((candidate) => {
+        if (candidate) {
+          console.log('Sending ICE candidate to peer');
+          this.webSocketManager.send({ type: 'ice-candidate', code, data: candidate });
+        }
+      });
+
+      // Wait for data channel from peer
+      peerConnection.onDataChannel((event) => {
+        console.log('Received data channel from peer');
+        this.dataChannelManager.setupDataChannel(event.channel, (data) => {
+          const callback = this.messageCallbacks.get(code);
+          if (callback) callback(data);
+        });
+      });
+
+      // Signal ready to receive offer
+      this.webSocketManager.send({ type: 'join', code });
+      console.log('Sent join signal to server');
+    } catch (error) {
+      console.error('Error joining connection:', error);
       throw error;
     }
   }
