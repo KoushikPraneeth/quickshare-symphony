@@ -87,14 +87,14 @@ export class WebSocketManager {
       throw new Error('Connection not initiated');
     }
 
-    const timeoutPromise = new Promise((_, reject) => {
+    const timeoutPromise = new Promise<void>((_, reject) => {
       setTimeout(() => reject(new Error('Connection timeout')), timeout);
     });
 
     return Promise.race([this.connectionPromise, timeoutPromise]);
   }
 
-  async send(message: any) {
+  async send(message: any): Promise<void> {
     try {
       await this.waitForConnection();
       if (this.ws?.readyState === WebSocket.OPEN) {
