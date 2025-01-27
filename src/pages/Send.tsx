@@ -38,15 +38,12 @@ const Send = () => {
       setChunks(fileChunks);
       console.log(`File split into ${fileChunks.length} chunks`);
       
-      // Generate a random 6-character code
       const randomCode = Math.random().toString(36).substring(2, 8).toUpperCase();
       setCode(randomCode);
       
       try {
-        // Create WebRTC connection
         await webRTCService.createConnection(randomCode);
         
-        // Send chunks with progress tracking
         for (let i = 0; i < fileChunks.length; i++) {
           try {
             await webRTCService.sendData(randomCode, fileChunks[i]);
@@ -56,7 +53,7 @@ const Send = () => {
             console.error(`Error sending chunk ${i}:`, error);
             toast({
               title: "Error sending file",
-              description: "Connection issue. Please try again.",
+              description: "Failed to send chunk. Please try again.",
               variant: "destructive",
             });
             return;
@@ -71,7 +68,7 @@ const Send = () => {
         console.error('Error creating WebRTC connection:', error);
         toast({
           title: "Connection Error",
-          description: "Failed to establish connection. Please check if the receiver is ready and try again.",
+          description: "Failed to establish connection. Please try again later.",
           variant: "destructive",
         });
       }
