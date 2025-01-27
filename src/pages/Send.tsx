@@ -14,7 +14,7 @@ const Send = () => {
   const [file, setFile] = useState<File | null>(null);
   const [progress, setProgress] = useState(0);
   const [code, setCode] = useState<string>('');
-  const [chunks, setChunks] = useState<Blob[]>([]);
+  const [chunks, setChunks] = useState<ArrayBuffer[]>([]);
   const { toast } = useToast();
   const webRTCService = WebRTCService.getInstance();
 
@@ -50,12 +50,11 @@ const Send = () => {
           currentProgress = Math.min(100, currentProgress + 5);
           setProgress(currentProgress);
           
-          // Simulate sending chunks via WebRTC
+          // Send chunks via WebRTC
           if (fileChunks[Math.floor(currentProgress / 5)]) {
             try {
               const chunk = fileChunks[Math.floor(currentProgress / 5)];
-              const buffer = await chunk.arrayBuffer();
-              await webRTCService.sendData(randomCode, buffer);
+              await webRTCService.sendData(randomCode, chunk);
             } catch (error) {
               console.error('Error sending chunk:', error);
             }

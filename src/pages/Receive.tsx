@@ -13,7 +13,7 @@ const Receive = () => {
   const [code, setCode] = useState('');
   const [isConnecting, setIsConnecting] = useState(false);
   const [progress, setProgress] = useState(0);
-  const [receivedChunks, setReceivedChunks] = useState<Blob[]>([]);
+  const [receivedChunks, setReceivedChunks] = useState<ArrayBuffer[]>([]);
   const { toast } = useToast();
   const webRTCService = WebRTCService.getInstance();
 
@@ -27,8 +27,7 @@ const Receive = () => {
   }, [code]);
 
   const handleChunkReceived = (data: ArrayBuffer) => {
-    const blob = new Blob([data]);
-    setReceivedChunks(prev => [...prev, blob]);
+    setReceivedChunks(prev => [...prev, data]);
     // Update progress based on chunk size
     setProgress(prev => Math.min(prev + 10, 100));
   };
