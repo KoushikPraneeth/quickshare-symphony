@@ -34,28 +34,37 @@ class WebRTCService {
     console.log('Attempting to connect to signaling server...');
     
     try {
-      this.ws = new WebSocket('ws://localhost:8080');
+      // Use secure WebSocket in production
+      const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${wsProtocol}//${window.location.hostname}:8080`;
+      console.log('Connecting to WebSocket server at:', wsUrl);
+      
+      this.ws = new WebSocket(wsUrl);
       
       this.ws.onopen = () => {
         console.log('Connected to signaling server successfully');
-        this.reconnectAttempts = 0; // Reset attempts on successful connection
+        this.reconnectAttempts = 0;
       };
 
       this.ws.onmessage = async (event) => {
-        const message = JSON.parse(event.data);
-        const { type, code, data } = message;
-        console.log('Received signaling message:', type, 'for code:', code);
+        try {
+          const message = JSON.parse(event.data);
+          const { type, code, data } = message;
+          console.log('Received signaling message:', type, 'for code:', code);
 
-        switch (type) {
-          case 'offer':
-            await this.handleOffer(code, data);
-            break;
-          case 'answer':
-            await this.handleAnswer(code, data);
-            break;
-          case 'ice-candidate':
-            await this.handleIceCandidate(code, data);
-            break;
+          switch (type) {
+            case 'offer':
+              await this.handleOffer(code, data);
+              break;
+            case 'answer':
+              await this.handleAnswer(code, data);
+              break;
+            case 'ice-candidate':
+              await this.handleIceCandidate(code, data);
+              break;
+          }
+        } catch (error) {
+          console.error('Error handling WebSocket message:', error);
         }
       };
 
@@ -229,16 +238,25 @@ class WebRTCService {
   async sendData(code: string, data: ArrayBuffer): Promise<void> {
     const connection = this.connections.get(code);
     if (!connection?.dataChannel) {
+      console.error('No data channel available for code:', code);
       throw new Error('No data channel available');
     }
 
+    // Enhanced data channel ready check
     if (!connection.isReady || connection.dataChannel.readyState !== 'open') {
       console.log('Waiting for data channel to be ready...');
-      await new Promise<void>((resolve) => {
+      let attempts = 0;
+      const maxAttempts = 30; // 3 seconds max wait
+      
+      await new Promise<void>((resolve, reject) => {
         const checkReady = setInterval(() => {
+          attempts++;
           if (connection.isReady && connection.dataChannel?.readyState === 'open') {
             clearInterval(checkReady);
             resolve();
+          } else if (attempts >= maxAttempts) {
+            clearInterval(checkReady);
+            reject(new Error('Data channel failed to open'));
           }
         }, 100);
       });
@@ -246,12 +264,16 @@ class WebRTCService {
 
     const CHUNK_SIZE = 16384; // 16KB chunks
     let offset = 0;
+    const totalSize = data.byteLength;
 
-    while (offset < data.byteLength) {
+    while (offset < totalSize) {
       const chunk = data.slice(offset, offset + CHUNK_SIZE);
       connection.dataChannel.send(chunk);
-      console.log(`Sent chunk: ${offset}-${offset + chunk.byteLength} of ${data.byteLength}`);
+      console.log(`Sent chunk: ${offset}-${offset + chunk.byteLength} of ${totalSize} (${Math.round((offset / totalSize) * 100)}%)`);
       offset += CHUNK_SIZE;
+      
+      // Small delay to prevent overwhelming the data channel
+      await new Promise(resolve => setTimeout(resolve, 10));
     }
   }
 

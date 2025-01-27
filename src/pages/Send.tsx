@@ -7,7 +7,7 @@ import { CodeDisplay } from '@/components/CodeDisplay';
 import { Progress } from '@/components/ui/progress';
 import { motion } from 'framer-motion';
 import { FileSplitter } from '@/utils/FileSplitter';
-import { useToast } from '@/components/ui/use-toast';
+import { useToast } from '@/hooks/use-toast';
 import WebRTCService from '@/utils/WebRTCService';
 
 const Send = () => {
@@ -40,33 +40,39 @@ const Send = () => {
       const randomCode = Math.random().toString(36).substring(2, 8).toUpperCase();
       setCode(randomCode);
       
-      // Create WebRTC connection
-      await webRTCService.createConnection(randomCode);
-      
-      // Update progress as chunks are processed
-      let currentProgress = 0;
-      const progressInterval = setInterval(async () => {
-        if (currentProgress < 100) {
-          currentProgress = Math.min(100, currentProgress + 5);
-          setProgress(currentProgress);
-          
-          // Send chunks via WebRTC
-          if (fileChunks[Math.floor(currentProgress / 5)]) {
-            try {
-              const chunk = fileChunks[Math.floor(currentProgress / 5)];
-              await webRTCService.sendData(randomCode, chunk);
-            } catch (error) {
-              console.error('Error sending chunk:', error);
-            }
+      try {
+        // Create WebRTC connection
+        await webRTCService.createConnection(randomCode);
+        
+        // Send chunks with progress tracking
+        for (let i = 0; i < fileChunks.length; i++) {
+          try {
+            await webRTCService.sendData(randomCode, fileChunks[i]);
+            const currentProgress = Math.round(((i + 1) / fileChunks.length) * 100);
+            setProgress(currentProgress);
+          } catch (error) {
+            console.error(`Error sending chunk ${i}:`, error);
+            toast({
+              title: "Error sending file",
+              description: "Failed to send file chunk. Please try again.",
+              variant: "destructive",
+            });
+            return;
           }
-        } else {
-          clearInterval(progressInterval);
-          toast({
-            title: "File ready to share",
-            description: "Share the code with the receiver to start the transfer",
-          });
         }
-      }, 200);
+        
+        toast({
+          title: "File ready to share",
+          description: "Share the code with the receiver to start the transfer",
+        });
+      } catch (error) {
+        console.error('Error creating WebRTC connection:', error);
+        toast({
+          title: "Connection Error",
+          description: "Failed to establish connection. Please try again.",
+          variant: "destructive",
+        });
+      }
     } catch (error) {
       console.error('Error preparing file:', error);
       toast({
