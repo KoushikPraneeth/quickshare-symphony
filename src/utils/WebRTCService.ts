@@ -160,6 +160,29 @@ class WebRTCService {
     }
   }
 
+  private async waitForDataChannelReady(code: string, timeout = 10000): Promise<void> {
+    const connection = this.connections.get(code);
+    if (!connection?.dataChannel) {
+      throw new Error('No data channel available');
+    }
+
+    return new Promise((resolve, reject) => {
+      const startTime = Date.now();
+      
+      const checkReady = () => {
+        if (connection.isReady && connection.dataChannel?.readyState === 'open') {
+          resolve();
+        } else if (Date.now() - startTime > timeout) {
+          reject(new Error('Data channel connection timeout'));
+        } else {
+          setTimeout(checkReady, 100);
+        }
+      };
+      
+      checkReady();
+    });
+  }
+
   async createConnection(code: string): Promise<void> {
     console.log('Creating WebRTC connection for code:', code);
     const peerConnection = new RTCPeerConnection(this.configuration);
@@ -218,6 +241,16 @@ class WebRTCService {
 
     dataChannel.onclose = () => {
       console.log('Data channel closed');
+      const connection = Array.from(this.connections.entries())
+        .find(([_, conn]) => conn.dataChannel === dataChannel);
+      if (connection) {
+        const [code, conn] = connection;
+        conn.isReady = false;
+      }
+    };
+
+    dataChannel.onerror = (error) => {
+      console.error('Data channel error:', error);
     };
 
     dataChannel.onmessage = (event) => {
@@ -236,44 +269,37 @@ class WebRTCService {
   }
 
   async sendData(code: string, data: ArrayBuffer): Promise<void> {
+    console.log('Attempting to send data for code:', code);
     const connection = this.connections.get(code);
     if (!connection?.dataChannel) {
       console.error('No data channel available for code:', code);
       throw new Error('No data channel available');
     }
 
-    // Enhanced data channel ready check
-    if (!connection.isReady || connection.dataChannel.readyState !== 'open') {
-      console.log('Waiting for data channel to be ready...');
-      let attempts = 0;
-      const maxAttempts = 30; // 3 seconds max wait
+    try {
+      // Wait for data channel to be ready with a 10 second timeout
+      await this.waitForDataChannelReady(code);
       
-      await new Promise<void>((resolve, reject) => {
-        const checkReady = setInterval(() => {
-          attempts++;
-          if (connection.isReady && connection.dataChannel?.readyState === 'open') {
-            clearInterval(checkReady);
-            resolve();
-          } else if (attempts >= maxAttempts) {
-            clearInterval(checkReady);
-            reject(new Error('Data channel failed to open'));
-          }
-        }, 100);
-      });
-    }
+      const CHUNK_SIZE = 16384; // 16KB chunks
+      let offset = 0;
+      const totalSize = data.byteLength;
 
-    const CHUNK_SIZE = 16384; // 16KB chunks
-    let offset = 0;
-    const totalSize = data.byteLength;
-
-    while (offset < totalSize) {
-      const chunk = data.slice(offset, offset + CHUNK_SIZE);
-      connection.dataChannel.send(chunk);
-      console.log(`Sent chunk: ${offset}-${offset + chunk.byteLength} of ${totalSize} (${Math.round((offset / totalSize) * 100)}%)`);
-      offset += CHUNK_SIZE;
-      
-      // Small delay to prevent overwhelming the data channel
-      await new Promise(resolve => setTimeout(resolve, 10));
+      while (offset < totalSize) {
+        const chunk = data.slice(offset, offset + CHUNK_SIZE);
+        if (connection.dataChannel.readyState === 'open') {
+          connection.dataChannel.send(chunk);
+          console.log(`Sent chunk: ${offset}-${offset + chunk.byteLength} of ${totalSize} (${Math.round((offset / totalSize) * 100)}%)`);
+          offset += CHUNK_SIZE;
+          
+          // Small delay between chunks to prevent overwhelming the channel
+          await new Promise(resolve => setTimeout(resolve, 50));
+        } else {
+          throw new Error('Data channel closed during transmission');
+        }
+      }
+    } catch (error) {
+      console.error('Error sending data:', error);
+      throw error;
     }
   }
 

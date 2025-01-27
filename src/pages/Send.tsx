@@ -15,6 +15,7 @@ const Send = () => {
   const [progress, setProgress] = useState(0);
   const [code, setCode] = useState<string>('');
   const [chunks, setChunks] = useState<ArrayBuffer[]>([]);
+  const [isUploading, setIsUploading] = useState(false);
   const { toast } = useToast();
   const webRTCService = WebRTCService.getInstance();
 
@@ -27,10 +28,11 @@ const Send = () => {
   }, [code]);
 
   const handleFileSelect = async (selectedFile: File) => {
-    setFile(selectedFile);
-    setProgress(0);
-    
     try {
+      setFile(selectedFile);
+      setProgress(0);
+      setIsUploading(true);
+      
       console.log('Starting file splitting...');
       const fileChunks = await FileSplitter.splitFile(selectedFile);
       setChunks(fileChunks);
@@ -54,7 +56,7 @@ const Send = () => {
             console.error(`Error sending chunk ${i}:`, error);
             toast({
               title: "Error sending file",
-              description: "Failed to send file chunk. Please try again.",
+              description: "Connection issue. Please try again.",
               variant: "destructive",
             });
             return;
@@ -69,7 +71,7 @@ const Send = () => {
         console.error('Error creating WebRTC connection:', error);
         toast({
           title: "Connection Error",
-          description: "Failed to establish connection. Please try again.",
+          description: "Failed to establish connection. Please check if the receiver is ready and try again.",
           variant: "destructive",
         });
       }
@@ -80,6 +82,8 @@ const Send = () => {
         description: "There was an error preparing your file for transfer",
         variant: "destructive",
       });
+    } finally {
+      setIsUploading(false);
     }
   };
 
