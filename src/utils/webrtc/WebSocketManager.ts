@@ -1,21 +1,30 @@
-import { toast } from '@/components/ui/use-toast';
+import { toast } from '@/hooks/use-toast';
 
 export class WebSocketManager {
   private ws: WebSocket | null = null;
   private reconnectAttempts = 0;
   private readonly maxReconnectAttempts = 5;
   private messageHandlers: Map<string, (message: any) => void> = new Map();
+  private connectionPromise: Promise<void> | null = null;
+  private isConnecting = false;
 
   connect(url: string): Promise<void> {
     console.log('Attempting to connect to signaling server...');
     
-    return new Promise((resolve, reject) => {
+    if (this.isConnecting) {
+      console.log('Connection already in progress, returning existing promise');
+      return this.connectionPromise!;
+    }
+
+    this.isConnecting = true;
+    this.connectionPromise = new Promise((resolve, reject) => {
       try {
         this.ws = new WebSocket(url);
         
         this.ws.onopen = () => {
           console.log('Connected to signaling server successfully');
           this.reconnectAttempts = 0;
+          this.isConnecting = false;
           resolve();
         };
 
@@ -30,21 +39,26 @@ export class WebSocketManager {
         this.ws.onerror = (error) => {
           console.error('WebSocket error:', error);
           this.handleConnectionError();
+          this.isConnecting = false;
           reject(error);
         };
 
         this.ws.onclose = () => {
           console.log('WebSocket connection closed');
           this.handleConnectionError();
+          this.isConnecting = false;
           reject(new Error('WebSocket connection closed'));
         };
 
       } catch (error) {
         console.error('Error creating WebSocket connection:', error);
         this.handleConnectionError();
+        this.isConnecting = false;
         reject(error);
       }
     });
+
+    return this.connectionPromise;
   }
 
   private handleConnectionError() {
@@ -54,7 +68,9 @@ export class WebSocketManager {
       setTimeout(() => {
         const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const wsUrl = `${wsProtocol}//${window.location.hostname}:8080`;
-        this.connect(wsUrl);
+        this.connect(wsUrl).catch(error => {
+          console.error('Reconnection attempt failed:', error);
+        });
       }, 2000 * this.reconnectAttempts);
     } else {
       console.error('Max reconnection attempts reached');
@@ -66,11 +82,29 @@ export class WebSocketManager {
     }
   }
 
-  send(message: any) {
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(message));
-    } else {
-      throw new Error('WebSocket is not connected');
+  async waitForConnection(timeout = 10000): Promise<void> {
+    if (!this.connectionPromise) {
+      throw new Error('Connection not initiated');
+    }
+
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('Connection timeout')), timeout);
+    });
+
+    return Promise.race([this.connectionPromise, timeoutPromise]);
+  }
+
+  async send(message: any) {
+    try {
+      await this.waitForConnection();
+      if (this.ws?.readyState === WebSocket.OPEN) {
+        this.ws.send(JSON.stringify(message));
+      } else {
+        throw new Error('WebSocket is not connected');
+      }
+    } catch (error) {
+      console.error('Error sending message:', error);
+      throw error;
     }
   }
 
@@ -83,5 +117,7 @@ export class WebSocketManager {
       this.ws.close();
       this.ws = null;
     }
+    this.isConnecting = false;
+    this.connectionPromise = null;
   }
 }
