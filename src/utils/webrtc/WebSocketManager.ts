@@ -17,7 +17,7 @@ export class WebSocketManager {
     }
 
     this.isConnecting = true;
-    this.connectionPromise = new Promise((resolve, reject) => {
+    this.connectionPromise = new Promise<void>((resolve, reject) => {
       try {
         this.ws = new WebSocket(url);
         
@@ -29,10 +29,14 @@ export class WebSocketManager {
         };
 
         this.ws.onmessage = (event) => {
-          const message = JSON.parse(event.data);
-          const handler = this.messageHandlers.get(message.type);
-          if (handler) {
-            handler(message);
+          try {
+            const message = JSON.parse(event.data);
+            const handler = this.messageHandlers.get(message.type);
+            if (handler) {
+              handler(message);
+            }
+          } catch (error) {
+            console.error('Error processing message:', error);
           }
         };
 
@@ -66,12 +70,16 @@ export class WebSocketManager {
       this.reconnectAttempts++;
       console.log(`Attempting to reconnect (${this.reconnectAttempts}/${this.maxReconnectAttempts})...`);
       setTimeout(() => {
+        if (this.ws) {
+          this.ws.close();
+          this.ws = null;
+        }
         const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const wsUrl = `${wsProtocol}//${window.location.hostname}:8080`;
         this.connect(wsUrl).catch(error => {
           console.error('Reconnection attempt failed:', error);
         });
-      }, 2000 * this.reconnectAttempts);
+      }, Math.min(1000 * Math.pow(2, this.reconnectAttempts), 10000)); // Exponential backoff with max 10s
     } else {
       console.error('Max reconnection attempts reached');
       toast({
@@ -97,27 +105,27 @@ export class WebSocketManager {
   async send(message: any): Promise<void> {
     try {
       await this.waitForConnection();
-      if (this.ws?.readyState === WebSocket.OPEN) {
-        this.ws.send(JSON.stringify(message));
-      } else {
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
         throw new Error('WebSocket is not connected');
       }
+      this.ws.send(JSON.stringify(message));
     } catch (error) {
       console.error('Error sending message:', error);
       throw error;
     }
   }
 
-  addMessageHandler(type: string, handler: (message: any) => void) {
+  addMessageHandler(type: string, handler: (message: any) => void): void {
     this.messageHandlers.set(type, handler);
   }
 
-  close() {
+  close(): void {
     if (this.ws) {
       this.ws.close();
       this.ws = null;
     }
     this.isConnecting = false;
     this.connectionPromise = null;
+    this.reconnectAttempts = 0;
   }
 }
