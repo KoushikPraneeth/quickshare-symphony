@@ -43,13 +43,9 @@ export class WebSocketManager {
         this.ws.onmessage = (event) => {
           try {
             const message = JSON.parse(event.data);
-            if (message.type === 'connection-success') {
-              console.log('Received connection success confirmation');
-            } else {
-              const handler = this.messageHandlers.get(message.type);
-              if (handler) {
-                handler(message);
-              }
+            const handler = this.messageHandlers.get(message.type);
+            if (handler) {
+              handler(message);
             }
           } catch (error) {
             console.error('Error processing message:', error);
@@ -90,10 +86,6 @@ export class WebSocketManager {
       console.log(`Attempting to reconnect (${this.reconnectAttempts}/${this.maxReconnectAttempts}) in ${backoffTime}ms...`);
       
       setTimeout(() => {
-        if (this.ws) {
-          this.ws.close();
-          this.ws = null;
-        }
         this.connect(this.currentUrl).catch(error => {
           console.error('Reconnection attempt failed:', error);
         });
