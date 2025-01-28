@@ -8,7 +8,7 @@ export class WebSocketManager {
   private connectionPromise: Promise<void> | null = null;
   private isConnecting = false;
 
-  connect(customUrl?: string): Promise<void> {
+  async connect(url: string): Promise<void> {
     console.log('Attempting to connect to signaling server...');
     
     if (this.isConnecting) {
@@ -19,14 +19,8 @@ export class WebSocketManager {
     this.isConnecting = true;
     this.connectionPromise = new Promise<void>((resolve, reject) => {
       try {
-        // Use environment-aware WebSocket URL
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const host = window.location.hostname;
-        const port = '3001'; // Match server port
-        const wsUrl = customUrl || `${protocol}//${host}:${port}`;
-        
-        console.log('Connecting to WebSocket URL:', wsUrl);
-        this.ws = new WebSocket(wsUrl);
+        console.log('Connecting to WebSocket URL:', url);
+        this.ws = new WebSocket(url);
         
         this.ws.onopen = () => {
           console.log('Connected to signaling server successfully');
@@ -87,7 +81,7 @@ export class WebSocketManager {
           this.ws.close();
           this.ws = null;
         }
-        this.connect().catch(error => {
+        this.connect(this.ws?.url || '').catch(error => {
           console.error('Reconnection attempt failed:', error);
         });
       }, backoffTime);
@@ -99,18 +93,6 @@ export class WebSocketManager {
         variant: "destructive",
       });
     }
-  }
-
-  async waitForConnection(timeout = 10000): Promise<void> {
-    if (!this.connectionPromise) {
-      throw new Error('Connection not initiated');
-    }
-
-    const timeoutPromise = new Promise<void>((_, reject) => {
-      setTimeout(() => reject(new Error('Connection timeout')), timeout);
-    });
-
-    return Promise.race([this.connectionPromise, timeoutPromise]);
   }
 
   async send(message: any): Promise<void> {
@@ -139,5 +121,17 @@ export class WebSocketManager {
     this.connectionPromise = null;
     this.reconnectAttempts = 0;
     this.messageHandlers.clear();
+  }
+
+  private async waitForConnection(timeout = 10000): Promise<void> {
+    if (!this.connectionPromise) {
+      throw new Error('Connection not initiated');
+    }
+
+    const timeoutPromise = new Promise<void>((_, reject) => {
+      setTimeout(() => reject(new Error('Connection timeout')), timeout);
+    });
+
+    return Promise.race([this.connectionPromise, timeoutPromise]);
   }
 }

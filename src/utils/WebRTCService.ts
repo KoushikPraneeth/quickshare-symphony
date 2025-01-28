@@ -33,7 +33,8 @@ class WebRTCService {
   private async connectToSignalingServer() {
     try {
       const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${wsProtocol}//${window.location.hostname}:8080`;
+      const wsUrl = `${wsProtocol}//${window.location.hostname}:3001`;
+      console.log('Connecting to signaling server at:', wsUrl);
       await this.webSocketManager.connect(wsUrl);
       this.setupSignalingHandlers();
     } catch (error) {
@@ -91,6 +92,7 @@ class WebRTCService {
 
   async createConnection(code: string): Promise<void> {
     try {
+      console.log('Creating new connection with code:', code);
       const peerConnection = new PeerConnectionManager(this.configuration);
       this.peerConnections.set(code, peerConnection);
 
@@ -102,12 +104,19 @@ class WebRTCService {
 
       peerConnection.onIceCandidate((candidate) => {
         if (candidate) {
-          this.webSocketManager.send({ type: 'ice-candidate', code, data: candidate });
+          this.webSocketManager.send({ 
+            type: 'ice-candidate', 
+            code, 
+            data: candidate 
+          }).catch(error => {
+            console.error('Error sending ICE candidate:', error);
+          });
         }
       });
 
       const offer = await peerConnection.createOffer();
-      this.webSocketManager.send({ type: 'offer', code, data: offer });
+      await this.webSocketManager.send({ type: 'offer', code, data: offer });
+      console.log('Connection created successfully');
     } catch (error) {
       console.error('Error creating connection:', error);
       throw error;
