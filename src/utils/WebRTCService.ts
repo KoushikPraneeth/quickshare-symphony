@@ -9,6 +9,7 @@ class WebRTCService {
   private dataChannelManager: DataChannelManager;
   private peerConnections: Map<string, PeerConnectionManager> = new Map();
   private messageCallbacks: Map<string, (data: ArrayBuffer) => void> = new Map();
+  private isConnected: boolean = false;
   
   private readonly configuration = {
     iceServers: [
@@ -36,10 +37,15 @@ class WebRTCService {
       const host = window.location.hostname;
       const wsUrl = `${wsProtocol}//${host}:3001`;
       console.log('Connecting to signaling server at:', wsUrl);
+      
       await this.webSocketManager.connect(wsUrl);
+      this.isConnected = true;
       this.setupSignalingHandlers();
+      
+      console.log('Successfully connected to signaling server');
     } catch (error) {
       console.error('Failed to connect to signaling server:', error);
+      this.isConnected = false;
       toast({
         title: "Connection Error",
         description: "Failed to connect to server. Please try again later.",
@@ -62,7 +68,7 @@ class WebRTCService {
         });
 
         const answer = await peerConnection.createAnswer(message.data);
-        this.webSocketManager.send({ type: 'answer', code: message.code, data: answer });
+        await this.webSocketManager.send({ type: 'answer', code: message.code, data: answer });
       } catch (error) {
         console.error('Error handling offer:', error);
       }
@@ -92,6 +98,11 @@ class WebRTCService {
   }
 
   async createConnection(code: string): Promise<void> {
+    if (!this.isConnected) {
+      console.log('Waiting for WebSocket connection...');
+      await this.webSocketManager.waitForConnection();
+    }
+
     try {
       console.log('Creating new connection with code:', code);
       const peerConnection = new PeerConnectionManager(this.configuration);
@@ -104,7 +115,7 @@ class WebRTCService {
       });
 
       peerConnection.onIceCandidate((candidate) => {
-        if (candidate) {
+        if (candidate && this.isConnected) {
           this.webSocketManager.send({ 
             type: 'ice-candidate', 
             code, 
