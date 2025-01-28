@@ -33,7 +33,8 @@ class WebRTCService {
   private async connectToSignalingServer() {
     try {
       const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${wsProtocol}//${window.location.hostname}:3001`;
+      const host = window.location.hostname;
+      const wsUrl = `${wsProtocol}//${host}:3001`;
       console.log('Connecting to signaling server at:', wsUrl);
       await this.webSocketManager.connect(wsUrl);
       this.setupSignalingHandlers();

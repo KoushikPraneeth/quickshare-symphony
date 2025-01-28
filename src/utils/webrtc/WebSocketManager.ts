@@ -7,6 +7,7 @@ export class WebSocketManager {
   private messageHandlers: Map<string, (message: any) => void> = new Map();
   private connectionPromise: Promise<void> | null = null;
   private isConnecting = false;
+  private currentUrl: string = '';
 
   async connect(url: string): Promise<void> {
     console.log('Attempting to connect to signaling server...');
@@ -16,6 +17,7 @@ export class WebSocketManager {
       return this.connectionPromise!;
     }
 
+    this.currentUrl = url;
     this.isConnecting = true;
     this.connectionPromise = new Promise<void>((resolve, reject) => {
       try {
@@ -81,7 +83,7 @@ export class WebSocketManager {
           this.ws.close();
           this.ws = null;
         }
-        this.connect(this.ws?.url || '').catch(error => {
+        this.connect(this.currentUrl).catch(error => {
           console.error('Reconnection attempt failed:', error);
         });
       }, backoffTime);
