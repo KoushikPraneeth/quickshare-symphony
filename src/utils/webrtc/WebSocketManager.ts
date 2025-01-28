@@ -8,7 +8,7 @@ export class WebSocketManager {
   private connectionPromise: Promise<void> | null = null;
   private isConnecting = false;
 
-  connect(url: string): Promise<void> {
+  connect(customUrl?: string): Promise<void> {
     console.log('Attempting to connect to signaling server...');
     
     if (this.isConnecting) {
@@ -19,7 +19,14 @@ export class WebSocketManager {
     this.isConnecting = true;
     this.connectionPromise = new Promise<void>((resolve, reject) => {
       try {
-        this.ws = new WebSocket(url);
+        // Use environment-aware WebSocket URL
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const host = window.location.hostname;
+        const port = '3001'; // Match server port
+        const wsUrl = customUrl || `${protocol}//${host}:${port}`;
+        
+        console.log('Connecting to WebSocket URL:', wsUrl);
+        this.ws = new WebSocket(wsUrl);
         
         this.ws.onopen = () => {
           console.log('Connected to signaling server successfully');
@@ -31,9 +38,13 @@ export class WebSocketManager {
         this.ws.onmessage = (event) => {
           try {
             const message = JSON.parse(event.data);
-            const handler = this.messageHandlers.get(message.type);
-            if (handler) {
-              handler(message);
+            if (message.type === 'connection-success') {
+              console.log('Received connection success confirmation');
+            } else {
+              const handler = this.messageHandlers.get(message.type);
+              if (handler) {
+                handler(message);
+              }
             }
           } catch (error) {
             console.error('Error processing message:', error);
@@ -65,21 +76,21 @@ export class WebSocketManager {
     return this.connectionPromise;
   }
 
-  private handleConnectionError() {
+  private handleConnectionError(): void {
     if (this.reconnectAttempts < this.maxReconnectAttempts) {
       this.reconnectAttempts++;
-      console.log(`Attempting to reconnect (${this.reconnectAttempts}/${this.maxReconnectAttempts})...`);
+      const backoffTime = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 10000);
+      console.log(`Attempting to reconnect (${this.reconnectAttempts}/${this.maxReconnectAttempts}) in ${backoffTime}ms...`);
+      
       setTimeout(() => {
         if (this.ws) {
           this.ws.close();
           this.ws = null;
         }
-        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsUrl = `${wsProtocol}//${window.location.hostname}:8080`;
-        this.connect(wsUrl).catch(error => {
+        this.connect().catch(error => {
           console.error('Reconnection attempt failed:', error);
         });
-      }, Math.min(1000 * Math.pow(2, this.reconnectAttempts), 10000)); // Exponential backoff with max 10s
+      }, backoffTime);
     } else {
       console.error('Max reconnection attempts reached');
       toast({
@@ -127,5 +138,6 @@ export class WebSocketManager {
     this.isConnecting = false;
     this.connectionPromise = null;
     this.reconnectAttempts = 0;
+    this.messageHandlers.clear();
   }
 }

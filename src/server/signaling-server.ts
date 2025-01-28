@@ -1,12 +1,19 @@
 import { WebSocketServer, WebSocket } from 'ws';
+import * as http from 'http';
+import * as https from 'https';
 
 interface SignalingMessage {
-  type: 'offer' | 'answer' | 'ice-candidate';
+  type: 'offer' | 'answer' | 'ice-candidate' | 'join';
   code: string;
   data: any;
 }
 
-const wss = new WebSocketServer({ port: 8080 });
+// Create HTTP server
+const server = http.createServer();
+
+// Create WebSocket server attached to HTTP server
+const wss = new WebSocketServer({ server });
+
 const clients = new Map<string, WebSocket>();
 
 wss.on('connection', (ws: WebSocket) => {
@@ -42,6 +49,13 @@ wss.on('connection', (ws: WebSocket) => {
       }
     }
   });
+
+  // Send initial connection success message
+  ws.send(JSON.stringify({ type: 'connection-success' }));
 });
 
-console.log('Signaling server running on ws://localhost:8080');
+// Start server on port 3001 (avoiding common blocked ports)
+const PORT = process.env.PORT || 3001;
+server.listen(PORT, () => {
+  console.log(`Signaling server running on port ${PORT}`);
+});
