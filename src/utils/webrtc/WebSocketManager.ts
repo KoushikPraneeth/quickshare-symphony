@@ -22,8 +22,11 @@ export class WebSocketManager {
       try {
         console.log('Connecting to WebSocket URL:', url);
         
-        // Convert ws:// to wss:// if needed
-        const secureUrl = url.replace('ws://', 'wss://');
+        // Only use wss:// in production
+        const secureUrl = process.env.NODE_ENV === 'production' 
+          ? url.replace('ws://', 'wss://') 
+          : url;
+          
         this.ws = new WebSocket(secureUrl);
 
         const timeout = setTimeout(() => {
