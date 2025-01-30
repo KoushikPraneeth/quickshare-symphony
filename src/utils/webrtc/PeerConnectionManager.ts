@@ -30,15 +30,15 @@ export class PeerConnectionManager {
     return this.peerConnection.createDataChannel(label);
   }
 
-  onIceCandidate(handler: (candidate: RTCIceCandidate | null) => void) {
+  onIceCandidate(handler: (candidate: RTCIceCandidate | null) => void): void {
     this.peerConnection.onicecandidate = (event) => handler(event.candidate);
   }
 
-  onDataChannel(handler: (event: RTCDataChannelEvent) => void) {
+  onDataChannel(handler: (event: RTCDataChannelEvent) => void): void {
     this.peerConnection.ondatachannel = handler;
   }
 
-  close() {
+  close(): void {
     this.peerConnection.close();
   }
 }

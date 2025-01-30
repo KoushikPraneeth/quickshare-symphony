@@ -2,41 +2,35 @@ import { toast } from '@/hooks/use-toast';
 
 export class WebSocketManager {
   private ws: WebSocket | null = null;
+  private messageHandlers = new Map<string, (message: any) => void>();
+  private isConnected = false;
+  private connectionPromise: Promise<void> | null = null;
   private reconnectAttempts = 0;
   private readonly maxReconnectAttempts = 5;
-  private messageHandlers: Map<string, (message: any) => void> = new Map();
-  private connectionPromise: Promise<void> | null = null;
-  private isConnecting = false;
-  private currentUrl: string = '';
-  private connectionTimeout = 10000; // 10 seconds
+  private readonly connectionTimeout = 10000; // 10 seconds
 
   async connect(url: string): Promise<void> {
-    console.log('Attempting to connect to signaling server...');
-    
-    if (this.isConnecting) {
-      console.log('Connection already in progress, returning existing promise');
-      return this.connectionPromise!;
+    if (this.isConnected) {
+      return;
     }
 
-    this.currentUrl = url;
-    this.isConnecting = true;
-    this.connectionPromise = new Promise<void>((resolve, reject) => {
+    console.log('Connecting to WebSocket server:', url);
+    
+    return new Promise((resolve, reject) => {
       try {
-        console.log('Connecting to WebSocket URL:', url);
         this.ws = new WebSocket(url);
         
         const timeoutId = setTimeout(() => {
-          if (this.ws?.readyState !== WebSocket.OPEN) {
+          if (!this.isConnected) {
             this.ws?.close();
             reject(new Error('Connection timeout'));
           }
         }, this.connectionTimeout);
 
         this.ws.onopen = () => {
-          console.log('Connected to signaling server successfully');
+          console.log('WebSocket connection established');
+          this.isConnected = true;
           clearTimeout(timeoutId);
-          this.reconnectAttempts = 0;
-          this.isConnecting = false;
           resolve();
         };
 
@@ -54,74 +48,46 @@ export class WebSocketManager {
 
         this.ws.onerror = (error) => {
           console.error('WebSocket error:', error);
+          this.isConnected = false;
           clearTimeout(timeoutId);
-          this.handleConnectionError();
-          this.isConnecting = false;
           reject(error);
         };
 
         this.ws.onclose = () => {
           console.log('WebSocket connection closed');
-          clearTimeout(timeoutId);
-          this.handleConnectionError();
-          this.isConnecting = false;
-          reject(new Error('WebSocket connection closed'));
+          this.isConnected = false;
+          this.handleReconnect();
         };
 
       } catch (error) {
-        console.error('Error creating WebSocket connection:', error);
-        this.handleConnectionError();
-        this.isConnecting = false;
+        console.error('Error creating WebSocket:', error);
         reject(error);
       }
     });
-
-    return this.connectionPromise;
   }
 
-  private handleConnectionError(): void {
+  private async handleReconnect(): Promise<void> {
     if (this.reconnectAttempts < this.maxReconnectAttempts) {
       this.reconnectAttempts++;
       const backoffTime = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 10000);
+      
       console.log(`Attempting to reconnect (${this.reconnectAttempts}/${this.maxReconnectAttempts}) in ${backoffTime}ms...`);
       
-      setTimeout(() => {
-        this.connect(this.currentUrl).catch(error => {
-          console.error('Reconnection attempt failed:', error);
-        });
-      }, backoffTime);
+      await new Promise(resolve => setTimeout(resolve, backoffTime));
+      
+      try {
+        await this.connect(this.ws?.url || '');
+        this.reconnectAttempts = 0;
+      } catch (error) {
+        console.error('Reconnection failed:', error);
+      }
     } else {
       console.error('Max reconnection attempts reached');
       toast({
         title: "Connection Error",
-        description: "Unable to connect to server. Please try again later.",
+        description: "Unable to maintain connection to server. Please try again later.",
         variant: "destructive",
       });
-    }
-  }
-
-  async waitForConnection(timeout = 10000): Promise<void> {
-    const startTime = Date.now();
-    
-    while ((!this.ws || this.ws.readyState !== WebSocket.OPEN) && Date.now() - startTime < timeout) {
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-    
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      throw new Error('Connection timeout');
-    }
-  }
-
-  async send(message: any): Promise<void> {
-    try {
-      await this.waitForConnection();
-      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-        throw new Error('WebSocket is not connected');
-      }
-      this.ws.send(JSON.stringify(message));
-    } catch (error) {
-      console.error('Error sending message:', error);
-      throw error;
     }
   }
 
@@ -129,13 +95,19 @@ export class WebSocketManager {
     this.messageHandlers.set(type, handler);
   }
 
+  async send(message: any): Promise<void> {
+    if (!this.ws || !this.isConnected) {
+      throw new Error('WebSocket is not connected');
+    }
+    this.ws.send(JSON.stringify(message));
+  }
+
   close(): void {
     if (this.ws) {
       this.ws.close();
       this.ws = null;
     }
-    this.isConnecting = false;
-    this.connectionPromise = null;
+    this.isConnected = false;
     this.reconnectAttempts = 0;
     this.messageHandlers.clear();
   }

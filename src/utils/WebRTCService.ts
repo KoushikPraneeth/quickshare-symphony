@@ -9,7 +9,6 @@ class WebRTCService {
   private dataChannelManager: DataChannelManager;
   private peerConnections: Map<string, PeerConnectionManager> = new Map();
   private messageCallbacks: Map<string, (data: ArrayBuffer) => void> = new Map();
-  private isConnected: boolean = false;
   
   private readonly configuration = {
     iceServers: [
@@ -39,13 +38,11 @@ class WebRTCService {
       console.log('Connecting to signaling server at:', wsUrl);
       
       await this.webSocketManager.connect(wsUrl);
-      this.isConnected = true;
       this.setupSignalingHandlers();
       
       console.log('Successfully connected to signaling server');
     } catch (error) {
       console.error('Failed to connect to signaling server:', error);
-      this.isConnected = false;
       toast({
         title: "Connection Error",
         description: "Failed to connect to server. Please try again later.",
@@ -98,13 +95,8 @@ class WebRTCService {
   }
 
   async createConnection(code: string): Promise<void> {
-    if (!this.isConnected) {
-      console.log('Waiting for WebSocket connection...');
-      await this.webSocketManager.waitForConnection();
-    }
-
+    console.log('Creating new connection with code:', code);
     try {
-      console.log('Creating new connection with code:', code);
       const peerConnection = new PeerConnectionManager(this.configuration);
       this.peerConnections.set(code, peerConnection);
 
@@ -115,7 +107,7 @@ class WebRTCService {
       });
 
       peerConnection.onIceCandidate((candidate) => {
-        if (candidate && this.isConnected) {
+        if (candidate) {
           this.webSocketManager.send({ 
             type: 'ice-candidate', 
             code, 
@@ -148,7 +140,6 @@ class WebRTCService {
         }
       });
 
-      // Wait for data channel from peer
       peerConnection.onDataChannel((event) => {
         console.log('Received data channel from peer');
         this.dataChannelManager.setupDataChannel(event.channel, (data) => {
@@ -157,8 +148,7 @@ class WebRTCService {
         });
       });
 
-      // Signal ready to receive offer
-      this.webSocketManager.send({ type: 'join', code });
+      await this.webSocketManager.send({ type: 'join', code });
       console.log('Sent join signal to server');
     } catch (error) {
       console.error('Error joining connection:', error);
