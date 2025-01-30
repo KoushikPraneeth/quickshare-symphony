@@ -3,80 +3,95 @@ export class WebSocketManager {
   private messageHandlers = new Map<string, (message: any) => void>();
   private isConnected = false;
   private connectionPromise: Promise<void> | null = null;
-  private readonly maxRetries = 3;
+  private readonly maxRetries = 5;
   private retryCount = 0;
   private readonly retryDelay = 2000;
 
   async connect(url: string): Promise<void> {
+    if (this.isConnected) {
+      console.log('WebSocket already connected');
+      return;
+    }
+
     if (this.connectionPromise) {
-      console.log('Connection already in progress, returning existing promise');
+      console.log('Connection already in progress');
       return this.connectionPromise;
     }
 
     this.connectionPromise = new Promise((resolve, reject) => {
-      console.log('Connecting to WebSocket URL:', url);
-      
-      this.ws = new WebSocket(url);
-      
-      const timeout = setTimeout(() => {
-        if (!this.isConnected) {
-          console.log('Connection timeout');
-          this.ws?.close();
-          reject(new Error('Connection timeout'));
-        }
-      }, 5000);
+      try {
+        console.log('Connecting to WebSocket at:', url);
+        this.ws = new WebSocket(url);
 
-      this.ws.onopen = () => {
-        console.log('WebSocket connection established');
-        this.isConnected = true;
-        clearTimeout(timeout);
-        resolve();
-      };
-
-      this.ws.onmessage = (event) => {
-        try {
-          const message = JSON.parse(event.data);
-          const handler = this.messageHandlers.get(message.type);
-          if (handler) {
-            handler(message);
+        const timeout = setTimeout(() => {
+          if (!this.isConnected) {
+            console.log('Connection timeout');
+            this.ws?.close();
+            reject(new Error('Connection timeout'));
           }
-        } catch (error) {
-          console.error('Error processing message:', error);
-        }
-      };
+        }, 10000);
 
-      this.ws.onerror = (error) => {
-        console.error('WebSocket error:', error);
-        this.isConnected = false;
-        clearTimeout(timeout);
-        this.handleConnectionError(url, reject);
-      };
+        this.ws.onopen = () => {
+          console.log('WebSocket connected successfully');
+          this.isConnected = true;
+          clearTimeout(timeout);
+          this.retryCount = 0;
+          resolve();
+        };
 
-      this.ws.onclose = () => {
-        console.log('WebSocket connection closed');
-        this.isConnected = false;
-        this.handleConnectionError(url, reject);
-      };
+        this.ws.onmessage = (event) => {
+          try {
+            const message = JSON.parse(event.data);
+            const handler = this.messageHandlers.get(message.type);
+            if (handler) {
+              handler(message);
+            }
+          } catch (error) {
+            console.error('Error processing message:', error);
+          }
+        };
+
+        this.ws.onerror = (error) => {
+          console.error('WebSocket error:', error);
+          this.isConnected = false;
+          if (!this.ws) return;
+          this.ws.close();
+        };
+
+        this.ws.onclose = () => {
+          console.log('WebSocket connection closed');
+          this.isConnected = false;
+          clearTimeout(timeout);
+          this.handleReconnection(url, reject);
+        };
+      } catch (error) {
+        console.error('Error creating WebSocket:', error);
+        reject(error);
+      }
     });
 
     return this.connectionPromise;
   }
 
-  private async handleConnectionError(url: string, reject: (reason?: any) => void) {
-    if (this.retryCount < this.maxRetries) {
-      this.retryCount++;
-      console.log(`Retrying connection (${this.retryCount}/${this.maxRetries})...`);
-      
-      await new Promise(resolve => setTimeout(resolve, this.retryDelay));
-      
-      try {
-        await this.connect(url);
-      } catch (error) {
-        reject(error);
-      }
-    } else {
+  private async handleReconnection(url: string, reject: (reason?: any) => void) {
+    if (this.retryCount >= this.maxRetries) {
+      console.log('Max retry attempts reached');
       this.retryCount = 0;
+      this.connectionPromise = null;
       reject(new Error('Max retry attempts reached'));
+      return;
+    }
+
+    this.retryCount++;
+    const delay = this.retryDelay * Math.pow(2, this.retryCount - 1);
+    console.log(`Retrying connection (${this.retryCount}/${this.maxRetries}) in ${delay}ms...`);
+
+    await new Promise(resolve => setTimeout(resolve, delay));
+    
+    try {
+      await this.connect(url);
+    } catch (error) {
+      console.error('Reconnection attempt failed:', error);
     }
   }
 
