@@ -32,9 +32,7 @@ class WebRTCService {
 
   private async connectToSignalingServer() {
     try {
-      const host = window.location.hostname;
-      const port = '3001';
-      const wsUrl = `ws://${host}:${port}`;
+      const wsUrl = 'ws://localhost:3001';
       console.log('Connecting to signaling server at:', wsUrl);
       
       await this.webSocketManager.connect(wsUrl);
@@ -95,6 +93,10 @@ class WebRTCService {
   }
 
   async createConnection(code: string): Promise<void> {
+    if (!this.webSocketManager.isWebSocketConnected()) {
+      throw new Error('WebSocket connection not established');
+    }
+
     console.log('Creating new connection with code:', code);
     try {
       const peerConnection = new PeerConnectionManager(this.configuration);
