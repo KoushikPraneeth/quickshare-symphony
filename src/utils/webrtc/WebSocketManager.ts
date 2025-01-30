@@ -14,14 +14,17 @@ export class WebSocketManager {
     }
 
     if (this.connectionPromise) {
-      console.log('Connection already in progress');
+      console.log('Connection already in progress, returning existing promise');
       return this.connectionPromise;
     }
 
     this.connectionPromise = new Promise((resolve, reject) => {
       try {
-        console.log('Connecting to WebSocket at:', url);
-        this.ws = new WebSocket(url);
+        console.log('Connecting to WebSocket URL:', url);
+        
+        // Convert ws:// to wss:// if needed
+        const secureUrl = url.replace('ws://', 'wss://');
+        this.ws = new WebSocket(secureUrl);
 
         const timeout = setTimeout(() => {
           if (!this.isConnected) {
@@ -62,7 +65,7 @@ export class WebSocketManager {
           console.log('WebSocket connection closed');
           this.isConnected = false;
           clearTimeout(timeout);
-          this.handleReconnection(url, reject);
+          this.handleReconnection(secureUrl, reject);
         };
       } catch (error) {
         console.error('Error creating WebSocket:', error);
