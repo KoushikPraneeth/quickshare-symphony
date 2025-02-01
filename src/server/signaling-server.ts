@@ -1,8 +1,8 @@
-import WebSocket from 'ws';
+import { WebSocketServer } from 'ws';
 import { createServer } from 'http';
 
 const server = createServer();
-const wss = new WebSocket.Server({ server });
+const wss = new WebSocketServer({ server });
 
 console.log('Starting WebSocket server...');
 
