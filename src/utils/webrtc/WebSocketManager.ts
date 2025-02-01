@@ -48,6 +48,7 @@ export class WebSocketManager {
         this.ws.onmessage = (event) => {
           try {
             const message = JSON.parse(event.data);
+            console.log('Received WebSocket message:', message);
             const handler = this.messageHandlers.get(message.type);
             if (handler) {
               handler(message);
