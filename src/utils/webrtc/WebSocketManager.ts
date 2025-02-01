@@ -6,6 +6,7 @@ export class WebSocketManager {
   private readonly maxRetries = 5;
   private retryCount = 0;
   private readonly retryDelay = 2000;
+  private clientId: string | null = null;
 
   async connect(url: string): Promise<void> {
     if (this.isConnected) {
@@ -22,7 +23,6 @@ export class WebSocketManager {
       try {
         console.log('Connecting to WebSocket URL:', url);
         
-        // Only use wss:// in production
         const secureUrl = process.env.NODE_ENV === 'production' 
           ? url.replace('ws://', 'wss://') 
           : url;
@@ -49,6 +49,12 @@ export class WebSocketManager {
           try {
             const message = JSON.parse(event.data);
             console.log('Received WebSocket message:', message);
+            
+            if (message.type === 'connection') {
+              this.clientId = message.clientId;
+              console.log('Received client ID:', this.clientId);
+            }
+            
             const handler = this.messageHandlers.get(message.type);
             if (handler) {
               handler(message);
@@ -68,6 +74,7 @@ export class WebSocketManager {
         this.ws.onclose = () => {
           console.log('WebSocket connection closed');
           this.isConnected = false;
+          this.clientId = null;
           clearTimeout(timeout);
           this.handleReconnection(secureUrl, reject);
         };
@@ -110,7 +117,14 @@ export class WebSocketManager {
     if (!this.ws || !this.isConnected) {
       throw new Error('WebSocket is not connected');
     }
-    this.ws.send(JSON.stringify(message));
+    
+    // Add client ID to outgoing messages
+    const messageWithId = {
+      ...message,
+      clientId: this.clientId
+    };
+    
+    this.ws.send(JSON.stringify(messageWithId));
   }
 
   close(): void {
@@ -122,9 +136,14 @@ export class WebSocketManager {
     this.retryCount = 0;
     this.connectionPromise = null;
     this.messageHandlers.clear();
+    this.clientId = null;
   }
 
   isWebSocketConnected(): boolean {
     return this.isConnected;
+  }
+
+  getClientId(): string | null {
+    return this.clientId;
   }
 }
