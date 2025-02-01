@@ -1,15 +1,12 @@
 import SimplePeer from 'simple-peer';
 import { WebSocketManager } from './webrtc/WebSocketManager';
 import { toast } from 'sonner';
-import { exec } from 'child_process';
-import path from 'path';
 
 export class WebRTCService {
   private static instance: WebRTCService;
   private peer: SimplePeer.Instance | null = null;
   private wsManager: WebSocketManager;
   private dataCallback: ((data: any) => void) | null = null;
-  private static serverStarted = false;
 
   private constructor() {
     this.wsManager = new WebSocketManager();
@@ -22,60 +19,8 @@ export class WebRTCService {
     return WebRTCService.instance;
   }
 
-  private async startSignalingServer(): Promise<void> {
-    if (WebRTCService.serverStarted) {
-      return;
-    }
-
-    return new Promise((resolve) => {
-      console.log('Starting signaling server...');
-      const serverPath = path.join(__dirname, '..', 'server', 'signaling-server.ts');
-      
-      const server = exec(`ts-node ${serverPath}`, (error, stdout, stderr) => {
-        if (error) {
-          console.error(`Error starting server: ${error}`);
-          return;
-        }
-        if (stderr) {
-          console.error(`Server stderr: ${stderr}`);
-          return;
-        }
-        console.log(`Server stdout: ${stdout}`);
-      });
-
-      server.stdout?.on('data', (data) => {
-        console.log(`Server output: ${data}`);
-        if (data.includes('WebSocket server is running')) {
-          WebRTCService.serverStarted = true;
-          resolve();
-        }
-      });
-
-      server.stderr?.on('data', (data) => {
-        console.error(`Server error: ${data}`);
-      });
-
-      // Ensure server is killed on process termination
-      process.on('SIGTERM', () => {
-        console.log('SIGTERM received. Killing server process...');
-        server.kill();
-      });
-
-      process.on('SIGINT', () => {
-        console.log('SIGINT received. Killing server process...');
-        server.kill();
-      });
-    });
-  }
-
   async createConnection(): Promise<string> {
     console.log('Creating new WebRTC connection...');
-    
-    // Start signaling server if not already started
-    await this.startSignalingServer();
-    
-    // Wait a bit for the server to be ready
-    await new Promise(resolve => setTimeout(resolve, 1000));
     
     const wsUrl = process.env.NODE_ENV === 'production'
       ? 'wss://signaling.lovable.dev'
