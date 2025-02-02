@@ -22,14 +22,36 @@ export class WebRTCService {
   async createConnection(): Promise<string> {
     console.log('Creating new WebRTC connection...');
     
-    const wsUrl = process.env.NODE_ENV === 'production'
-      ? 'wss://signaling.lovable.dev'
-      : 'ws://localhost:3001';
+    // Use wss://ws.postman-echo.com/raw as a fallback if the main server fails
+    const wsUrls = [
+      process.env.NODE_ENV === 'production' ? 'wss://signaling.lovable.dev' : 'ws://localhost:3001',
+      'wss://ws.postman-echo.com/raw'
+    ];
+    
+    let connected = false;
+    let error = null;
+    
+    for (const wsUrl of wsUrls) {
+      try {
+        console.log(`Attempting to connect to ${wsUrl}...`);
+        await this.wsManager.connect(wsUrl);
+        connected = true;
+        console.log(`Successfully connected to ${wsUrl}`);
+        break;
+      } catch (err) {
+        error = err;
+        console.error(`Failed to connect to ${wsUrl}:`, err);
+        continue;
+      }
+    }
+
+    if (!connected) {
+      console.error('All connection attempts failed');
+      toast.error('Failed to establish connection');
+      throw error || new Error('Failed to connect to any WebSocket server');
+    }
     
     try {
-      await this.wsManager.connect(wsUrl);
-      console.log('WebSocket connected successfully');
-      
       this.peer = new SimplePeer({ initiator: true, trickle: false });
       
       return new Promise((resolve, reject) => {
