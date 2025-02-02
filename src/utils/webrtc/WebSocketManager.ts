@@ -30,9 +30,7 @@ export class WebSocketManager {
         const connectionTimeout = setTimeout(() => {
           if (!this.isConnected) {
             console.log('Connection timeout');
-            if (this.ws) {
-              this.ws.close();
-            }
+            this.ws?.close();
             reject(new Error('Connection timeout'));
           }
         }, RETRY_CONFIG.connectionTimeout);
