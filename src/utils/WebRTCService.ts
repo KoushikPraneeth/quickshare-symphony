@@ -1,11 +1,12 @@
-import SimplePeer from 'simple-peer';
 import { WebSocketManager } from './webrtc/WebSocketManager';
+import { PeerConnection } from './webrtc/PeerConnection';
+import { WEBSOCKET_URLS } from './webrtc/WebRTCConfig';
 import { toast } from 'sonner';
 
 export class WebRTCService {
   private static instance: WebRTCService;
-  private peer: SimplePeer.Instance | null = null;
   private wsManager: WebSocketManager;
+  private peerConnection: PeerConnection | null = null;
   private dataCallback: ((data: any) => void) | null = null;
 
   private constructor() {
@@ -22,16 +23,10 @@ export class WebRTCService {
   async createConnection(): Promise<string> {
     console.log('Creating new WebRTC connection...');
     
-    // Use wss://ws.postman-echo.com/raw as a fallback if the main server fails
-    const wsUrls = [
-      process.env.NODE_ENV === 'production' ? 'wss://signaling.lovable.dev' : 'ws://localhost:3001',
-      'wss://ws.postman-echo.com/raw'
-    ];
-    
     let connected = false;
     let error = null;
     
-    for (const wsUrl of wsUrls) {
+    for (const wsUrl of WEBSOCKET_URLS) {
       try {
         console.log(`Attempting to connect to ${wsUrl}...`);
         await this.wsManager.connect(wsUrl);
@@ -52,15 +47,15 @@ export class WebRTCService {
     }
     
     try {
-      this.peer = new SimplePeer({ initiator: true, trickle: false });
+      this.peerConnection = new PeerConnection(true);
       
       return new Promise((resolve, reject) => {
-        if (!this.peer) {
+        if (!this.peerConnection) {
           reject(new Error('Peer not initialized'));
           return;
         }
 
-        this.peer.on('signal', async (data) => {
+        this.peerConnection.onSignal(async (data) => {
           try {
             console.log('Generated signal data:', data);
             await this.wsManager.send({
@@ -74,21 +69,16 @@ export class WebRTCService {
           }
         });
 
-        this.peer.on('connect', () => {
-          console.log('Peer connection established');
-          toast.success('Connected to peer');
-        });
-
-        this.peer.on('data', (data) => {
-          if (this.dataCallback) {
-            this.dataCallback(JSON.parse(data.toString()));
+        this.peerConnection.setCallbacks({
+          onData: (data) => {
+            if (this.dataCallback) {
+              this.dataCallback(data);
+            }
+          },
+          onError: (err) => {
+            console.error('Peer connection error:', err);
+            reject(err);
           }
-        });
-
-        this.peer.on('error', (err) => {
-          console.error('Peer connection error:', err);
-          toast.error('Connection error occurred');
-          reject(err);
         });
       });
     } catch (error) {
@@ -99,16 +89,17 @@ export class WebRTCService {
   }
 
   async connect(connectionId: string): Promise<void> {
-    const wsUrl = process.env.NODE_ENV === 'production'
-      ? 'wss://signaling.lovable.dev'
-      : 'ws://localhost:3001';
-      
-    await this.wsManager.connect(wsUrl);
+    await this.wsManager.connect(WEBSOCKET_URLS[0]);
     
-    this.peer = new SimplePeer({ initiator: false, trickle: false });
+    this.peerConnection = new PeerConnection(false);
     
     return new Promise((resolve, reject) => {
-      this.peer!.on('signal', async (data) => {
+      if (!this.peerConnection) {
+        reject(new Error('Peer not initialized'));
+        return;
+      }
+
+      this.peerConnection.onSignal(async (data) => {
         try {
           await this.wsManager.send({
             type: 'answer',
@@ -120,29 +111,23 @@ export class WebRTCService {
         }
       });
 
-      this.peer!.on('connect', () => {
-        console.log('Peer connection established');
-        resolve();
-      });
-
-      this.peer!.on('data', (data) => {
-        if (this.dataCallback) {
-          this.dataCallback(JSON.parse(data.toString()));
-        }
-      });
-
-      this.peer!.on('error', (err) => {
-        console.error('Peer connection error:', err);
-        reject(err);
+      this.peerConnection.setCallbacks({
+        onConnect: () => resolve(),
+        onData: (data) => {
+          if (this.dataCallback) {
+            this.dataCallback(data);
+          }
+        },
+        onError: (err) => reject(err)
       });
     });
   }
 
   async sendData(data: any): Promise<void> {
-    if (!this.peer) {
+    if (!this.peerConnection) {
       throw new Error('Peer connection not established');
     }
-    this.peer.send(JSON.stringify(data));
+    await this.peerConnection.sendData(data);
   }
 
   onData(callback: (data: any) => void) {

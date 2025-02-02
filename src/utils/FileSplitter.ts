@@ -2,6 +2,7 @@ export class FileSplitter {
   private readonly CHUNK_SIZE = 16384; // 16KB chunks
 
   async splitFile(file: File): Promise<ArrayBuffer[]> {
+    console.log(`Splitting file: ${file.name} (${file.size} bytes)`);
     const chunks: ArrayBuffer[] = [];
     let offset = 0;
 
@@ -12,6 +13,7 @@ export class FileSplitter {
       offset += this.CHUNK_SIZE;
     }
 
+    console.log(`File split into ${chunks.length} chunks`);
     return chunks;
   }
 }

@@ -1,33 +1,30 @@
+import { RETRY_CONFIG } from './WebRTCConfig';
+import { toast } from 'sonner';
+
 export class WebSocketManager {
   private ws: WebSocket | null = null;
   private messageHandlers = new Map<string, (message: any) => void>();
   private isConnected = false;
   private connectionPromise: Promise<void> | null = null;
-  private readonly maxRetries = 5;
   private retryCount = 0;
-  private readonly retryDelay = 2000;
   private clientId: string | null = null;
 
   async connect(url: string): Promise<void> {
+    console.log(`Attempting to connect to WebSocket at ${url}`);
+    
     if (this.isConnected) {
       console.log('WebSocket already connected');
       return;
     }
 
     if (this.connectionPromise) {
-      console.log('Connection already in progress, returning existing promise');
+      console.log('Connection in progress, returning existing promise');
       return this.connectionPromise;
     }
 
     this.connectionPromise = new Promise((resolve, reject) => {
       try {
-        console.log('Connecting to WebSocket URL:', url);
-        
-        const secureUrl = process.env.NODE_ENV === 'production' 
-          ? url.replace('ws://', 'wss://') 
-          : url;
-          
-        this.ws = new WebSocket(secureUrl);
+        this.ws = new WebSocket(url);
 
         const timeout = setTimeout(() => {
           if (!this.isConnected) {
@@ -66,17 +63,12 @@ export class WebSocketManager {
 
         this.ws.onerror = (error) => {
           console.error('WebSocket error:', error);
-          this.isConnected = false;
-          if (!this.ws) return;
-          this.ws.close();
+          this.handleError(error, reject);
         };
 
         this.ws.onclose = () => {
           console.log('WebSocket connection closed');
-          this.isConnected = false;
-          this.clientId = null;
-          clearTimeout(timeout);
-          this.handleReconnection(secureUrl, reject);
+          this.handleClose(url, reject);
         };
       } catch (error) {
         console.error('Error creating WebSocket:', error);
@@ -87,8 +79,19 @@ export class WebSocketManager {
     return this.connectionPromise;
   }
 
-  private async handleReconnection(url: string, reject: (reason?: any) => void) {
-    if (this.retryCount >= this.maxRetries) {
+  private handleError(error: Event, reject: (reason?: any) => void) {
+    this.isConnected = false;
+    if (this.ws) {
+      this.ws.close();
+    }
+    reject(error);
+  }
+
+  private async handleClose(url: string, reject: (reason?: any) => void) {
+    this.isConnected = false;
+    this.clientId = null;
+    
+    if (this.retryCount >= RETRY_CONFIG.maxRetries) {
       console.log('Max retry attempts reached');
       this.retryCount = 0;
       this.connectionPromise = null;
@@ -97,8 +100,8 @@ export class WebSocketManager {
     }
 
     this.retryCount++;
-    const delay = this.retryDelay * Math.pow(2, this.retryCount - 1);
-    console.log(`Retrying connection (${this.retryCount}/${this.maxRetries}) in ${delay}ms...`);
+    const delay = RETRY_CONFIG.retryDelay * Math.pow(2, this.retryCount - 1);
+    console.log(`Retrying connection (${this.retryCount}/${RETRY_CONFIG.maxRetries}) in ${delay}ms...`);
 
     await new Promise(resolve => setTimeout(resolve, delay));
     
@@ -118,7 +121,6 @@ export class WebSocketManager {
       throw new Error('WebSocket is not connected');
     }
     
-    // Add client ID to outgoing messages
     const messageWithId = {
       ...message,
       clientId: this.clientId
