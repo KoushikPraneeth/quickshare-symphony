@@ -8,7 +8,6 @@ export class WebSocketManager {
   private connectionPromise: Promise<void> | null = null;
   private retryCount = 0;
   private clientId: string | null = null;
-  private reconnectTimeout: NodeJS.Timeout | null = null;
 
   async connect(url: string): Promise<void> {
     console.log(`Attempting to connect to WebSocket at ${url}`);
@@ -65,14 +64,34 @@ export class WebSocketManager {
 
         this.ws.onerror = (error) => {
           console.error('WebSocket error:', error);
+          this.isConnected = false;
           clearTimeout(connectionTimeout);
-          this.handleError(error, reject);
+          reject(error);
         };
 
         this.ws.onclose = () => {
           console.log('WebSocket connection closed');
+          this.isConnected = false;
+          this.clientId = null;
           clearTimeout(connectionTimeout);
-          this.handleClose(url, reject);
+          
+          if (this.retryCount < RETRY_CONFIG.maxRetries) {
+            this.retryCount++;
+            const delay = RETRY_CONFIG.retryDelay * Math.pow(2, this.retryCount - 1);
+            console.log(`Retrying connection (${this.retryCount}/${RETRY_CONFIG.maxRetries}) in ${delay}ms...`);
+            
+            setTimeout(async () => {
+              try {
+                await this.connect(url);
+                resolve();
+              } catch (error) {
+                console.error('Reconnection attempt failed:', error);
+                reject(error);
+              }
+            }, delay);
+          } else {
+            reject(new Error('Max retry attempts reached'));
+          }
         };
       } catch (error) {
         console.error('Error creating WebSocket:', error);
@@ -81,44 +100,6 @@ export class WebSocketManager {
     });
 
     return this.connectionPromise;
-  }
-
-  private handleError(error: Event, reject: (reason?: any) => void) {
-    this.isConnected = false;
-    if (this.ws) {
-      this.ws.close();
-    }
-    reject(error);
-  }
-
-  private async handleClose(url: string, reject: (reason?: any) => void) {
-    this.isConnected = false;
-    this.clientId = null;
-    
-    if (this.retryCount >= RETRY_CONFIG.maxRetries) {
-      console.log('Max retry attempts reached');
-      this.retryCount = 0;
-      this.connectionPromise = null;
-      reject(new Error('Max retry attempts reached'));
-      return;
-    }
-
-    this.retryCount++;
-    const delay = RETRY_CONFIG.retryDelay * Math.pow(2, this.retryCount - 1);
-    console.log(`Retrying connection (${this.retryCount}/${RETRY_CONFIG.maxRetries}) in ${delay}ms...`);
-
-    if (this.reconnectTimeout) {
-      clearTimeout(this.reconnectTimeout);
-    }
-
-    this.reconnectTimeout = setTimeout(async () => {
-      try {
-        await this.connect(url);
-      } catch (error) {
-        console.error('Reconnection attempt failed:', error);
-        reject(error);
-      }
-    }, delay);
   }
 
   addMessageHandler(type: string, handler: (message: any) => void): void {
@@ -139,10 +120,6 @@ export class WebSocketManager {
   }
 
   close(): void {
-    if (this.reconnectTimeout) {
-      clearTimeout(this.reconnectTimeout);
-    }
-    
     if (this.ws) {
       this.ws.close();
       this.ws = null;
