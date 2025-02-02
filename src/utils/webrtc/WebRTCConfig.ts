@@ -1,9 +1,17 @@
 export const WEBSOCKET_URLS = [
-  process.env.NODE_ENV === 'production' ? 'wss://signaling.lovable.dev' : 'ws://localhost:3001',
-  'wss://ws.postman-echo.com/raw'
+  'ws://localhost:3001',
+  'wss://signaling.lovable.dev'
 ] as const;
 
 export const RETRY_CONFIG = {
-  maxRetries: 5,
-  retryDelay: 2000
+  maxRetries: 3,
+  retryDelay: 1000,
+  connectionTimeout: 5000
+} as const;
+
+export const PEER_CONFIG = {
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' }
+  ]
 } as const;

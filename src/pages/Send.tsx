@@ -5,11 +5,13 @@ import { FileSplitter } from '@/utils/FileSplitter';
 import { toast } from 'sonner';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
+import { Button } from '@/components/ui/button';
 
 const Send = () => {
   const [connectionId, setConnectionId] = useState<string>('');
   const [progress, setProgress] = useState(0);
   const [isConnected, setIsConnected] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
 
   const handleFileSelect = async (file: File) => {
     try {
@@ -47,6 +49,9 @@ const Send = () => {
   };
 
   const handleConnect = async () => {
+    if (isConnecting) return;
+    
+    setIsConnecting(true);
     try {
       const webRTCService = await WebRTCService.getInstance();
       const id = await webRTCService.createConnection();
@@ -55,7 +60,9 @@ const Send = () => {
       toast.success('Connection established! Share this ID with the receiver');
     } catch (error) {
       console.error('Error creating connection:', error);
-      toast.error('Failed to establish connection');
+      toast.error('Failed to establish connection. Please try again.');
+    } finally {
+      setIsConnecting(false);
     }
   };
 
@@ -67,16 +74,17 @@ const Send = () => {
         </CardHeader>
         <CardContent className="space-y-4">
           {!isConnected ? (
-            <button
+            <Button
               onClick={handleConnect}
-              className="w-full p-4 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90"
+              disabled={isConnecting}
+              className="w-full"
             >
-              Establish Connection
-            </button>
+              {isConnecting ? 'Connecting...' : 'Establish Connection'}
+            </Button>
           ) : (
             <div className="space-y-4">
               <div className="p-4 bg-muted rounded-lg">
-                <p className="text-center font-mono">{connectionId}</p>
+                <p className="text-center font-mono select-all">{connectionId}</p>
               </div>
               <FileUpload onFileSelect={handleFileSelect} />
               {progress > 0 && (
