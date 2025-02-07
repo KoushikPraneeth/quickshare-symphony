@@ -1,83 +1,148 @@
 # QuickShare Symphony
 
-A real-time file sharing application that allows users to transfer files of any size using WebSocket streaming.
+A real-time file sharing application that enables fast and reliable transfer of files of any size using WebSocket streaming.
 
 ## Features
 
-- Efficient file streaming using chunks
-- Real-time progress tracking
-- Support for any file type
-- No server-side storage (direct streaming)
-- Memory-efficient handling of large files
+- **Large File Support**: Can handle files of any size (even 50GB+) through efficient streaming
+- **Memory Efficient**: Uses File.slice() for streaming chunks, keeping memory usage constant
+- **Reliable Transfer**: 
+  - Automatic retry on failures
+  - Connection recovery
+  - Progress tracking
+  - Data integrity verification
+- **Adaptive Performance**:
+  - Dynamic chunk size adjustment
+  - Network condition monitoring
+  - Backoff strategy for retries
 
 ## How It Works
 
-1. **Sender Side:**
-   - Clicks "Establish Connection" to get a unique connection ID
-   - Shares the connection ID with the receiver
-   - Selects a file to send
-   - File is split into chunks and streamed via WebSocket
+The file transfer process works like cutting and sending pieces of a sugarcane:
 
-2. **Receiver Side:**
-   - Enters the connection ID
-   - Connects to the sender's session
-   - Automatically receives and assembles file chunks
-   - File is saved when transfer completes
+1. **File Splitting (FileSplitter.ts)**:
+   - File is split into 1KB chunks using File.slice()
+   - Only one chunk is loaded in memory at a time
+   - Chunks are streamed sequentially
+   - Automatic chunk size adjustment if network issues occur
 
-## Technical Implementation
+2. **Transfer (WebSocketService.ts)**:
+   - Each chunk is sent with its metadata
+   - Progress is tracked in real-time
+   - Failed chunks are automatically retried
+   - Lost connections are recovered
 
-### Frontend (React + TypeScript)
+3. **Assembly (FileAssembler.ts)**:
+   - Chunks are received and validated
+   - Progress is tracked
+   - Chunks are assembled in correct order
+   - Final file is verified for integrity
 
-- Uses File API for efficient chunking
-- WebSocket for real-time communication
-- Progress tracking and error handling
-- Automatic file download on completion
+## Technical Details
 
-### Backend (Spring Boot)
+### Core Components
 
-- WebSocket endpoint for file streaming
-- Session management for sender/receiver pairs
-- Memory-efficient binary message handling
-- No temporary file storage needed
+1. **FileSplitter**:
+```typescript
+async *createFileStream(file: File, options?: StreamOptions)
+```
+- Streams file chunks using File.slice()
+- Handles chunk size optimization
+- Reports progress
 
-## Running the Application
+2. **WebSocketService**:
+```typescript
+async sendFile(file: File, onProgress: (progress: number) => void)
+```
+- Manages WebSocket connection
+- Handles chunk transmission
+- Provides progress updates
+- Manages retries and reconnection
 
-1. Start the backend:
-   ```bash
-   cd quickshare
-   ./mvnw spring-boot:run
-   ```
+3. **FileAssembler**:
+```typescript
+addChunk(chunk: ArrayBuffer, metadata: FileMetadata)
+```
+- Manages chunk assembly
+- Verifies file integrity
+- Handles out-of-order chunks
 
-2. Start the frontend:
-   ```bash
-   npm install
-   npm run dev
-   ```
+### Key Features
 
-3. Access the frontend at `http://localhost:8080` and ensure the backend is running at `http://localhost:8081`
+1. **Streaming Implementation**:
+   - No full file loading into memory
+   - Constant memory usage regardless of file size
+   - Progressive chunk processing
 
-## Usage
+2. **Error Handling**:
+   - Automatic retry on chunk failure
+   - Dynamic chunk size adjustment
+   - Connection recovery
+   - Data validation
 
-1. Start both the frontend and backend servers:
-   ```bash
-   # Terminal 1: Start backend
-   cd quickshare
-   ./mvnw spring-boot:run
-   
-   # Terminal 2: Start frontend
-   npm run dev
-   ```
+3. **Performance Optimization**:
+   - Adaptive chunk sizing
+   - Connection quality monitoring
+   - Efficient binary data handling
 
-2. Open two browser windows (one for sending, one for receiving)
-2. In the sender window, click "Establish Connection" and copy the connection ID
-3. In the receiver window, paste the connection ID and click "Connect"
-4. Once connected, select a file in the sender window to begin transfer
-5. The receiver will automatically download the file when transfer completes
+## Setup and Installation
 
-## Architecture
+1. Clone the repository:
+```bash
+git clone https://github.com/yourusername/quickshare-symphony.git
+cd quickshare-symphony
+```
 
-- Frontend chunks files using `File.slice()`
-- Each chunk includes metadata (filename, type, chunk index, total chunks)
-- Backend acts as a relay, forwarding chunks without storing them
-- Receiver assembles chunks in real-time
-- Progress is tracked on both ends
+2. Install dependencies:
+```bash
+npm install
+```
+
+3. Start the development server:
+```bash
+npm run dev
+```
+
+### Backend Setup
+
+1. Navigate to the backend directory:
+```bash
+cd quickshare
+```
+
+2. Run the Spring Boot application:
+```bash
+./mvnw spring-boot:run
+```
+
+## Development
+
+### Frontend Stack
+- React + TypeScript
+- Vite
+- WebSocket API
+- File API
+- ArrayBuffer for binary data handling
+
+### Backend Stack
+- Spring Boot
+- WebSocket
+- Java Concurrency
+
+## Contributing
+
+1. Fork the repository
+2. Create your feature branch: `git checkout -b feature/amazing-feature`
+3. Commit your changes: `git commit -m 'Add amazing feature'`
+4. Push to the branch: `git push origin feature/amazing-feature`
+5. Open a Pull Request
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Acknowledgments
+
+- Inspired by the need for efficient large file transfer
+- Built with modern web technologies
+- Uses efficient streaming techniques similar to video streaming
