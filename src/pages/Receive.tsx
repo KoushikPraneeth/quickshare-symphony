@@ -1,6 +1,5 @@
+
 import React, { useState } from 'react';
-import { WebRTCService } from '@/utils/WebRTCService';
-import { FileAssembler } from '@/utils/FileAssembler';
 import { toast } from 'sonner';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -19,30 +18,10 @@ const Receive = () => {
         return;
       }
 
-      const webRTCService = await WebRTCService.getInstance();
-      const fileAssembler = new FileAssembler();
-
-      webRTCService.onData((data) => {
-        if (data.type === 'chunk') {
-          fileAssembler.addChunk(data.data, data.metadata);
-          setProgress((data.metadata.chunkIndex + 1) / data.metadata.totalChunks * 100);
-          
-          if (data.metadata.chunkIndex + 1 === data.metadata.totalChunks) {
-            const file = fileAssembler.assembleFile();
-            const url = URL.createObjectURL(file);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = data.metadata.fileName;
-            a.click();
-            URL.revokeObjectURL(url);
-            toast.success('File received successfully!');
-          }
-        }
-      });
-
-      await webRTCService.connect(connectionId);
+      // Simulate connection delay
+      await new Promise(resolve => setTimeout(resolve, 1000));
       setIsConnected(true);
-      toast.success('Connected successfully!');
+      toast.info('Backend implementation required for real connection');
     } catch (error) {
       console.error('Error connecting:', error);
       toast.error('Failed to connect');
