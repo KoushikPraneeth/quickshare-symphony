@@ -1,5 +1,6 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { webSocketService } from '@/services/WebSocketService';
 import { toast } from 'sonner';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -14,6 +15,13 @@ const Receive = () => {
   const [isPaused, setIsPaused] = useState(false);
   const [isTransferring, setIsTransferring] = useState(false);
   
+  useEffect(() => {
+    return () => {
+      // Cleanup WebSocket connection when component unmounts
+      webSocketService.disconnect();
+    };
+  }, []);
+
   const handleConnect = async () => {
     try {
       if (!connectionId.trim()) {
@@ -21,25 +29,56 @@ const Receive = () => {
         return;
       }
 
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // Connect WebSocket as receiver
+      await webSocketService.connectWebSocket(connectionId, 'receiver');
+      
+      // Setup receiver to handle incoming file chunks
+      webSocketService.setupReceiver(
+        // Progress callback
+        (progress) => {
+          setProgress(progress);
+          setIsTransferring(true);
+        },
+        // File received callback
+        (blob, fileName) => {
+          setIsTransferring(false);
+          setProgress(100);
+          
+          // Create download link
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = fileName;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+          
+          toast.success('File received successfully!');
+        }
+      );
+
       setIsConnected(true);
-      setIsTransferring(true);
-      toast.info('Backend implementation required for real connection');
+      toast.success('Connected successfully');
     } catch (error) {
       console.error('Error connecting:', error);
       toast.error('Failed to connect');
+      setIsConnected(false);
     }
   };
 
   const handlePauseResume = () => {
+    // TODO: Implement pause/resume functionality
     setIsPaused(!isPaused);
     toast.info(`Transfer ${isPaused ? 'resumed' : 'paused'}`);
   };
 
   const handleCancel = () => {
+    webSocketService.disconnect();
     setProgress(0);
     setIsTransferring(false);
     setIsPaused(false);
+    setIsConnected(false);
     toast.info('Transfer cancelled');
   };
 

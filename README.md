@@ -1,69 +1,83 @@
-# Welcome to your Lovable project
+# QuickShare Symphony
 
-## Project info
+A real-time file sharing application that allows users to transfer files of any size using WebSocket streaming.
 
-**URL**: https://lovable.dev/projects/51c7eb59-4083-48f0-9bec-57aa105e23de
+## Features
 
-## How can I edit this code?
+- Efficient file streaming using chunks
+- Real-time progress tracking
+- Support for any file type
+- No server-side storage (direct streaming)
+- Memory-efficient handling of large files
 
-There are several ways of editing your application.
+## How It Works
 
-**Use Lovable**
+1. **Sender Side:**
+   - Clicks "Establish Connection" to get a unique connection ID
+   - Shares the connection ID with the receiver
+   - Selects a file to send
+   - File is split into chunks and streamed via WebSocket
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/51c7eb59-4083-48f0-9bec-57aa105e23de) and start prompting.
+2. **Receiver Side:**
+   - Enters the connection ID
+   - Connects to the sender's session
+   - Automatically receives and assembles file chunks
+   - File is saved when transfer completes
 
-Changes made via Lovable will be committed automatically to this repo.
+## Technical Implementation
 
-**Use your preferred IDE**
+### Frontend (React + TypeScript)
 
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
+- Uses File API for efficient chunking
+- WebSocket for real-time communication
+- Progress tracking and error handling
+- Automatic file download on completion
 
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
+### Backend (Spring Boot)
 
-Follow these steps:
+- WebSocket endpoint for file streaming
+- Session management for sender/receiver pairs
+- Memory-efficient binary message handling
+- No temporary file storage needed
 
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
+## Running the Application
 
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
+1. Start the backend:
+   ```bash
+   cd quickshare
+   ./mvnw spring-boot:run
+   ```
 
-# Step 3: Install the necessary dependencies.
-npm i
+2. Start the frontend:
+   ```bash
+   npm install
+   npm run dev
+   ```
 
-# Step 4: Start the development server with auto-reloading and an instant preview.
-npm run dev
-```
+3. Access the frontend at `http://localhost:8080` and ensure the backend is running at `http://localhost:8081`
 
-**Edit a file directly in GitHub**
+## Usage
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+1. Start both the frontend and backend servers:
+   ```bash
+   # Terminal 1: Start backend
+   cd quickshare
+   ./mvnw spring-boot:run
+   
+   # Terminal 2: Start frontend
+   npm run dev
+   ```
 
-**Use GitHub Codespaces**
+2. Open two browser windows (one for sending, one for receiving)
+2. In the sender window, click "Establish Connection" and copy the connection ID
+3. In the receiver window, paste the connection ID and click "Connect"
+4. Once connected, select a file in the sender window to begin transfer
+5. The receiver will automatically download the file when transfer completes
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+## Architecture
 
-## What technologies are used for this project?
-
-This project is built with .
-
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
-
-## How can I deploy this project?
-
-Simply open [Lovable](https://lovable.dev/projects/51c7eb59-4083-48f0-9bec-57aa105e23de) and click on Share -> Publish.
-
-## I want to use a custom domain - is that possible?
-
-We don't support custom domains (yet). If you want to deploy your project under your own domain then we recommend using Netlify. Visit our docs for more details: [Custom domains](https://docs.lovable.dev/tips-tricks/custom-domain/)
+- Frontend chunks files using `File.slice()`
+- Each chunk includes metadata (filename, type, chunk index, total chunks)
+- Backend acts as a relay, forwarding chunks without storing them
+- Receiver assembles chunks in real-time
+- Progress is tracked on both ends
