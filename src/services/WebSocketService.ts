@@ -1,8 +1,7 @@
-import { FileSplitter } from '@/utils/FileSplitter';
+import { FileSplitter, StreamOptions } from '@/utils/FileSplitter';
 import { FileAssembler } from '@/utils/FileAssembler';
 import SockJS from 'sockjs-client';
 
-// Define a type that includes properties common to both WebSocket and SockJS
 type WebSocketLike = {
   send(data: string | ArrayBuffer | Blob | ArrayBufferView): void;
   close(): void;
@@ -11,7 +10,6 @@ type WebSocketLike = {
   onclose: ((this: WebSocket, ev: CloseEvent) => any) | null;
   onerror: ((this: WebSocket, ev: Event) => any) | null;
   onmessage: ((this: WebSocket, ev: MessageEvent) => any) | null;
-  // Add event listener methods
   addEventListener(type: string, listener: EventListener): void;
   removeEventListener(type: string, listener: EventListener): void;
 };
@@ -38,7 +36,6 @@ interface QueuedChunk {
 
 export class WebSocketService {
   private static readonly MAX_RETRIES = 5;
-  private static readonly MAX_QUEUE_SIZE = 100;
   private static readonly RETRY_DELAYS = [1000, 2000, 4000, 8000, 16000]; // Exponential backoff
 
   private ws: WebSocketLike | null = null;
@@ -49,10 +46,8 @@ export class WebSocketService {
   
   private connectionId: string | null = null;
   private role: 'sender' | 'receiver' | null = null;
-  private chunkQueue: QueuedChunk[] = [];
-  private processingQueue: boolean = false;
   private reconnecting: boolean = false;
-  private currentTransfer: { fileName: string; onProgress: (progress: number) => void } | null = null;
+  private transferCancelled: boolean = false;
 
   constructor() {
     this.fileSplitter = new FileSplitter();
@@ -116,11 +111,6 @@ export class WebSocketService {
         await this.connectWebSocket(this.connectionId!, this.role!);
         this.reconnecting = false;
         console.log('Reconnection successful');
-        
-        // Resume transfer if one was in progress
-        if (this.chunkQueue.length > 0) {
-          this.processChunkQueue();
-        }
         return;
       } catch (error) {
         console.error(`Reconnection attempt ${attempt + 1} failed:`, error);
@@ -160,9 +150,8 @@ export class WebSocketService {
         console.log(`WebSocket closed: ${event.code} ${event.reason}`);
         
         if (event.code === 1009) {
-          // Buffer overflow error - reduce chunk size and retry
-          console.log('Buffer overflow detected, reducing chunk size');
-          this.fileSplitter.cancelTransfer(this.currentTransfer?.fileName || '');
+          // Buffer overflow error - the FileSplitter will handle reducing chunk size
+          console.log('Buffer overflow detected, chunk size will be reduced automatically');
           await this.reconnect();
         } else if (event.code !== 1000 && !this.reconnecting) {
           // Attempt reconnection for unexpected closures
@@ -174,46 +163,6 @@ export class WebSocketService {
       ws.onerror = handleError;
       ws.onclose = handleClose;
     });
-  }
-
-  private async processChunkQueue(): Promise<void> {
-    if (this.processingQueue || this.chunkQueue.length === 0) {
-      return;
-    }
-
-    this.processingQueue = true;
-
-    while (this.chunkQueue.length > 0) {
-      const item = this.chunkQueue[0];
-
-      try {
-        await this.waitForConnection();
-        await this.sendChunkWithMetadata(item.chunk, item.metadata);
-        
-        // Successfully sent, remove from queue
-        this.chunkQueue.shift();
-        
-        if (this.currentTransfer) {
-          this.currentTransfer.onProgress((item.metadata.chunkIndex + 1) / item.metadata.totalChunks * 100);
-        }
-      } catch (error) {
-        console.error(`Error sending chunk ${item.metadata.chunkIndex}:`, error);
-        
-        item.retries++;
-        if (item.retries >= WebSocketService.MAX_RETRIES) {
-          console.error(`Failed to send chunk ${item.metadata.chunkIndex} after ${WebSocketService.MAX_RETRIES} attempts`);
-          this.chunkQueue = []; // Clear queue on critical failure
-          this.processingQueue = false;
-          throw new Error('Failed to send file after multiple retries');
-        }
-
-        // Wait before retrying
-        await new Promise(r => setTimeout(r, WebSocketService.RETRY_DELAYS[item.retries - 1]));
-        continue;
-      }
-    }
-
-    this.processingQueue = false;
   }
 
   private async sendChunkWithMetadata(chunk: ArrayBuffer, metadata: TransferMetadata): Promise<void> {
@@ -268,45 +217,50 @@ export class WebSocketService {
       throw new Error('WebSocket not connected');
     }
 
-    this.currentTransfer = { fileName: file.name, onProgress };
+    this.transferCancelled = false;
 
     try {
       console.log('Starting file transfer:', file.name);
-      const chunks = await this.fileSplitter.splitFile(file);
-      const totalChunks = chunks.length;
+      
+      const streamOptions: StreamOptions = {
+        onProgress,
+        chunkSize: this.fileSplitter.getCurrentChunkSize()
+      };
 
-      // Clear existing queue if any
-      this.chunkQueue = [];
+      // Use the streaming API
+      for await (const { chunk, index, total } of this.fileSplitter.createFileStream(file, streamOptions)) {
+        if (this.transferCancelled) {
+          throw new Error('Transfer cancelled');
+        }
 
-      // Queue all chunks
-      for (let i = 0; i < chunks.length; i++) {
-        this.chunkQueue.push({
-          chunk: chunks[i],
-          metadata: {
-            fileName: file.name,
-            mimeType: file.type,
-            totalChunks,
-            chunkIndex: i,
-          },
-          retries: 0
-        });
+        let retries = 0;
+        while (retries < WebSocketService.MAX_RETRIES) {
+          try {
+            await this.sendChunkWithMetadata(chunk, {
+              fileName: file.name,
+              mimeType: file.type,
+              totalChunks: total,
+              chunkIndex: index
+            });
+            break; // Success, move to next chunk
+          } catch (error) {
+            retries++;
+            console.error(`Error sending chunk ${index}, attempt ${retries}:`, error);
+            
+            if (retries >= WebSocketService.MAX_RETRIES) {
+              throw new Error(`Failed to send chunk ${index} after ${retries} attempts`);
+            }
 
-        // Wait if queue gets too large
-        if (this.chunkQueue.length >= WebSocketService.MAX_QUEUE_SIZE) {
-          await this.processChunkQueue();
+            // Wait before retry
+            await new Promise(r => setTimeout(r, WebSocketService.RETRY_DELAYS[retries - 1]));
+          }
         }
       }
-
-      // Process any remaining chunks
-      await this.processChunkQueue();
       
       console.log('File transfer completed:', file.name);
     } catch (error) {
       console.error('File transfer failed:', error);
-      this.fileSplitter.cancelTransfer(file.name);
       throw error;
-    } finally {
-      this.currentTransfer = null;
     }
   }
 
@@ -382,18 +336,20 @@ export class WebSocketService {
     return bytes.buffer;
   }
 
+  cancelTransfer(): void {
+    this.transferCancelled = true;
+  }
+
   disconnect(): void {
     if (this.ws) {
       console.log('Disconnecting WebSocket');
+      this.transferCancelled = true;
       this.fileAssembler.clearIncompleteFiles();
-      this.fileSplitter.cancelTransfer(this.currentTransfer?.fileName || '');
       this.ws.close();
       this.ws = null;
       this.connectionId = null;
       this.role = null;
-      this.chunkQueue = [];
-      this.processingQueue = false;
-      this.currentTransfer = null;
+      this.reconnecting = false;
     }
   }
 }

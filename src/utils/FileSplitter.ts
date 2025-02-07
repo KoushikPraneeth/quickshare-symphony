@@ -1,15 +1,15 @@
+export type StreamOptions = {
+  onProgress?: (progress: number) => void;
+  chunkSize?: number;
+};
+
 export class FileSplitter {
   private static readonly DEFAULT_CHUNK_SIZE = 1024; // 1KB default chunk size
   private static readonly MIN_CHUNK_SIZE = 256; // 256 bytes minimum
-  private static readonly MAX_CHUNKS = 1000000; // Increased for smaller chunks
-  private static readonly BACKOFF_FACTOR = 0.75; // Reduce chunk size by 25% on failure
-
   private currentChunkSize: number;
-  private activeTransfers: Set<string>;
 
   constructor() {
     this.currentChunkSize = FileSplitter.DEFAULT_CHUNK_SIZE;
-    this.activeTransfers = new Set();
     console.log(`FileSplitter initialized with chunk size: ${this.currentChunkSize} bytes`);
   }
 
@@ -22,108 +22,76 @@ export class FileSplitter {
       throw new Error('File is empty');
     }
 
-    const estimatedChunks = Math.ceil(file.size / this.currentChunkSize);
-    if (estimatedChunks > FileSplitter.MAX_CHUNKS) {
-      throw new Error(
-        `File too large. Would require ${estimatedChunks} chunks, ` +
-        `exceeding the limit of ${FileSplitter.MAX_CHUNKS}`
-      );
-    }
-
     console.log('File validation passed:');
     console.log(`- Name: ${file.name}`);
     console.log(`- Size: ${file.size} bytes`);
     console.log(`- Type: ${file.type}`);
-    console.log(`- Estimated chunks: ${estimatedChunks}`);
-    console.log(`- Current chunk size: ${this.currentChunkSize} bytes`);
+    console.log(`- Last modified: ${new Date(file.lastModified).toISOString()}`);
   }
 
-  async splitFile(file: File): Promise<ArrayBuffer[]> {
-    try {
-      this.validateFile(file);
-      
-      // Add file to active transfers
-      const transferId = `${file.name}-${file.size}-${Date.now()}`;
-      this.activeTransfers.add(transferId);
+  /**
+   * Creates an async iterator that yields chunks of the file
+   */
+  async *createFileStream(file: File, options: StreamOptions = {}): AsyncGenerator<{
+    chunk: ArrayBuffer;
+    index: number;
+    total: number;
+  }> {
+    this.validateFile(file);
+    
+    const chunkSize = options.chunkSize || this.currentChunkSize;
+    let offset = 0;
+    let index = 0;
+    const totalChunks = Math.ceil(file.size / chunkSize);
 
-      const chunks: ArrayBuffer[] = [];
-      let offset = 0;
-      let chunkIndex = 0;
-      let consecutiveFailures = 0;
+    console.log(`Starting file stream with chunk size: ${chunkSize} bytes`);
+    console.log(`Total chunks to process: ${totalChunks}`);
 
-      while (offset < file.size && this.activeTransfers.has(transferId)) {
-        const end = Math.min(offset + this.currentChunkSize, file.size);
-        const chunk = file.slice(offset, end);
+    while (offset < file.size) {
+      const end = Math.min(offset + chunkSize, file.size);
+      const chunk = file.slice(offset, end);
 
-        try {
-          const arrayBuffer = await this.readChunkAsArrayBuffer(chunk);
-          
-          // Validate chunk data
-          if (!arrayBuffer || arrayBuffer.byteLength === 0) {
-            throw new Error(`Invalid chunk data at offset ${offset}`);
-          }
+      try {
+        const arrayBuffer = await this.readChunkAsArrayBuffer(chunk);
+        
+        // Validate chunk data
+        if (!arrayBuffer || arrayBuffer.byteLength === 0) {
+          throw new Error(`Invalid chunk data at offset ${offset}`);
+        }
 
-          chunks.push(arrayBuffer);
-          console.log(`Chunk ${chunkIndex + 1} processed: ${arrayBuffer.byteLength} bytes`);
+        console.log(`Streaming chunk ${index + 1}/${totalChunks}:`);
+        console.log(`- Offset: ${offset}`);
+        console.log(`- Size: ${arrayBuffer.byteLength} bytes`);
 
-          // Reset consecutive failures on success
-          if (consecutiveFailures > 0) {
-            consecutiveFailures = 0;
-            // Gradually increase chunk size on success
-            this.increaseChunkSize();
-          }
+        // Report progress if callback provided
+        if (options.onProgress) {
+          options.onProgress((offset / file.size) * 100);
+        }
 
-          offset = end;
-          chunkIndex++;
+        yield {
+          chunk: arrayBuffer,
+          index,
+          total: totalChunks
+        };
 
-          const progress = (offset / file.size) * 100;
-          console.log(`Splitting progress: ${progress.toFixed(2)}%`);
-        } catch (error) {
-          console.error(`Error processing chunk at offset ${offset}:`, error);
-          
-          consecutiveFailures++;
-          if (consecutiveFailures >= 3) {
-            // Reduce chunk size after multiple failures
-            if (!this.reduceChunkSize()) {
-              throw new Error('Cannot reduce chunk size further, transfer failed');
-            }
-            consecutiveFailures = 0;
-            continue; // Retry with smaller chunk size
-          }
+        // Update for next iteration
+        offset = end;
+        index++;
 
-          // Retry current chunk
-          console.log(`Retrying chunk at offset ${offset}`);
-          await new Promise(resolve => setTimeout(resolve, 1000 * consecutiveFailures));
+      } catch (error) {
+        console.error(`Error processing chunk at offset ${offset}:`, error);
+        
+        // Reduce chunk size if we hit buffer limits
+        if (error.message?.includes('buffer too small') && this.reduceChunkSize()) {
+          // Retry with smaller chunk size
           continue;
         }
+        
+        throw new Error(`Failed to process chunk at offset ${offset}: ${error.message}`);
       }
-
-      // Check if transfer was cancelled
-      if (!this.activeTransfers.has(transferId)) {
-        throw new Error('File transfer was cancelled');
-      }
-
-      // Validate final result
-      const totalSize = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
-      if (totalSize !== file.size) {
-        throw new Error(
-          `Size mismatch after splitting. ` +
-          `Expected ${file.size} bytes, got ${totalSize} bytes`
-        );
-      }
-
-      console.log('File splitting completed successfully:');
-      console.log(`- Total chunks created: ${chunks.length}`);
-      console.log(`- Total size: ${totalSize} bytes`);
-      console.log(`- Final chunk size used: ${this.currentChunkSize} bytes`);
-
-      // Clean up
-      this.activeTransfers.delete(transferId);
-      return chunks;
-    } catch (error) {
-      console.error('Error splitting file:', error);
-      throw new Error(`Failed to split file: ${error.message}`);
     }
+
+    console.log('File streaming completed successfully');
   }
 
   private readChunkAsArrayBuffer(blob: Blob): Promise<ArrayBuffer> {
@@ -164,7 +132,7 @@ export class FileSplitter {
   }
 
   private reduceChunkSize(): boolean {
-    const newSize = Math.floor(this.currentChunkSize * FileSplitter.BACKOFF_FACTOR);
+    const newSize = Math.floor(this.currentChunkSize * 0.75); // Reduce by 25%
     if (newSize >= FileSplitter.MIN_CHUNK_SIZE) {
       this.currentChunkSize = newSize;
       console.log(`Reduced chunk size to ${this.currentChunkSize} bytes`);
@@ -174,23 +142,7 @@ export class FileSplitter {
     return false;
   }
 
-  private increaseChunkSize(): void {
-    const newSize = Math.min(
-      Math.floor(this.currentChunkSize / FileSplitter.BACKOFF_FACTOR),
-      FileSplitter.DEFAULT_CHUNK_SIZE
-    );
-    if (newSize !== this.currentChunkSize) {
-      this.currentChunkSize = newSize;
-      console.log(`Increased chunk size to ${this.currentChunkSize} bytes`);
-    }
-  }
-
-  cancelTransfer(fileName: string): void {
-    for (const transferId of this.activeTransfers) {
-      if (transferId.startsWith(fileName)) {
-        this.activeTransfers.delete(transferId);
-        console.log(`Cancelled transfer for ${fileName}`);
-      }
-    }
+  getCurrentChunkSize(): number {
+    return this.currentChunkSize;
   }
 }
