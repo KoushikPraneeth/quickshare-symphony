@@ -58,15 +58,10 @@ export class WebSocketService {
   async connectWebSocket(connectionId: string, role: 'sender' | 'receiver'): Promise<void> {
     return new Promise((resolve, reject) => {
       console.log(`Connecting WebSocket as ${role}...`);
-      this.ws = new SockJS(`${this.BASE_URL}/transfer`);
-      
-      // Set binary type to arraybuffer if it's a native WebSocket
-      if (this.ws instanceof WebSocket) {
-        console.log('Using native WebSocket');
-        this.ws.binaryType = 'arraybuffer';
-      } else {
-        console.log('Using SockJS');
-      }
+      // For testing, we're using native WebSocket directly
+      this.ws = new WebSocket(`ws://localhost:8081/transfer`);
+      console.log('Using native WebSocket');
+      (this.ws as WebSocket).binaryType = 'arraybuffer';
       
       this.ws.onopen = () => {
         console.log('WebSocket connection opened');

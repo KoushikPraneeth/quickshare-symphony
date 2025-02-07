@@ -19,8 +19,13 @@ public class WebSocketConfig implements WebSocketConfigurer {
 
     @Override
     public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
+        // Register native WebSocket endpoint
         registry.addHandler(transferHandler(), "/transfer")
-               .setAllowedOriginPatterns("http://localhost:8080") // Frontend URL
-               .withSockJS(); // Add SockJS fallback support
+               .setAllowedOriginPatterns("http://localhost:8080");
+
+        // Register SockJS fallback endpoint
+        registry.addHandler(transferHandler(), "/transfer")
+               .setAllowedOriginPatterns("http://localhost:8080")
+               .withSockJS();
     }
 }

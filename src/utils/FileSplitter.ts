@@ -1,5 +1,5 @@
 export class FileSplitter {
-  private static readonly CHUNK_SIZE = 16384; // 16KB chunks
+  private static readonly CHUNK_SIZE = 8192; // 8KB chunks
 
   constructor() {
     console.log(`FileSplitter initialized with chunk size: ${FileSplitter.CHUNK_SIZE} bytes`);
