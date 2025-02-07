@@ -34,6 +34,7 @@ export class WebSocketService {
   private fileAssembler: FileAssembler;
   private readonly BASE_URL = 'http://localhost:8081';
   private readonly FRONTEND_URL = 'http://localhost:8080';
+  private readonly CHUNK_SEND_INTERVAL = 10; // ms between chunks to prevent overload
   
   constructor() {
     this.fileSplitter = new FileSplitter();
@@ -58,14 +59,12 @@ export class WebSocketService {
   async connectWebSocket(connectionId: string, role: 'sender' | 'receiver'): Promise<void> {
     return new Promise((resolve, reject) => {
       console.log(`Connecting WebSocket as ${role}...`);
-      // For testing, we're using native WebSocket directly
       this.ws = new WebSocket(`ws://localhost:8081/transfer`);
       console.log('Using native WebSocket');
       (this.ws as WebSocket).binaryType = 'arraybuffer';
       
       this.ws.onopen = () => {
         console.log('WebSocket connection opened');
-        // Send connection details immediately after connection is established
         const connectionMsg = JSON.stringify({ type: 'connection', id: connectionId, role });
         console.log('Sending connection details:', connectionMsg);
         this.ws?.send(connectionMsg);
@@ -82,12 +81,8 @@ export class WebSocketService {
         const message = `WebSocket connection closed: ${event.code} ${event.reason}`;
         console.log(message);
         
-        if (event.code !== 1000) {
-          // 1000 is normal closure
-          // Only reject if the promise hasn't been resolved yet (connection not established)
-          if (this.ws?.readyState !== ReadyState.OPEN) {
-            reject(new Error(`Connection closed abnormally: ${event.code} ${event.reason}`));
-          }
+        if (event.code !== 1000 && this.ws?.readyState !== ReadyState.OPEN) {
+          reject(new Error(`Connection closed abnormally: ${event.code} ${event.reason}`));
         }
       };
     });
@@ -109,6 +104,41 @@ export class WebSocketService {
     console.log('Connection established successfully');
   }
 
+  private async sendChunkWithMetadata(
+    chunk: ArrayBuffer,
+    metadata: TransferMetadata,
+    isWebSocket: boolean
+  ): Promise<void> {
+    // First send metadata
+    this.ws!.send(JSON.stringify(metadata));
+
+    // Then send the chunk data
+    if (!isWebSocket) {
+      // For SockJS, convert binary to base64
+      const blob = new Blob([chunk]);
+      const base64 = await this.blobToBase64(blob);
+      this.ws!.send(JSON.stringify({
+        type: 'binary',
+        data: base64.split(',')[1]
+      }));
+    } else {
+      // For WebSocket, send binary directly
+      this.ws!.send(chunk);
+    }
+
+    // Add a small delay between chunks to prevent overwhelming the connection
+    await new Promise(resolve => setTimeout(resolve, this.CHUNK_SEND_INTERVAL));
+  }
+
+  private blobToBase64(blob: Blob): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = () => reject(new Error('Failed to convert blob to base64'));
+      reader.readAsDataURL(blob);
+    });
+  }
+
   async sendFile(file: File, onProgress: (progress: number) => void): Promise<void> {
     if (!this.ws) {
       throw new Error('WebSocket not connected');
@@ -123,6 +153,7 @@ export class WebSocketService {
     const totalChunks = chunks.length;
     console.log('File split into', totalChunks, 'chunks');
 
+    const isWebSocket = this.ws instanceof WebSocket;
     for (let i = 0; i < chunks.length; i++) {
       const metadata: TransferMetadata = {
         fileName: file.name,
@@ -131,91 +162,94 @@ export class WebSocketService {
         chunkIndex: i,
       };
 
-      // Send metadata as JSON
-      console.log(`Sending metadata for chunk ${i + 1}/${totalChunks}`);
-      
-      // Send metadata and wait for processing
-      await new Promise<void>(resolve => {
-        this.ws!.send(JSON.stringify(metadata));
-        // Small delay to ensure metadata is processed
-        setTimeout(resolve, 50);
-      });
-
-      // Send binary chunk
-      if (!(this.ws instanceof WebSocket)) {
-        console.log('Using SockJS - converting binary to base64');
-        // For SockJS, send binary data as base64 string
-        const reader = new FileReader();
-        reader.onload = () => {
-          const base64String = (reader.result as string).split(',')[1];
-          console.log(`Sending chunk ${i + 1} as base64`);
-          this.ws?.send(JSON.stringify({
-            type: 'binary',
-            data: base64String
-          }));
-        };
-        reader.readAsDataURL(new Blob([chunks[i]]));
-      } else {
-        console.log(`Sending chunk ${i + 1} as binary`);
-        this.ws.send(chunks[i]);
+      try {
+        await this.sendChunkWithMetadata(chunks[i], metadata, isWebSocket);
+        onProgress((i + 1) / totalChunks * 100);
+      } catch (error) {
+        console.error(`Error sending chunk ${i}:`, error);
+        throw new Error(`Failed to send chunk ${i}: ${error.message}`);
       }
-
-      onProgress((i + 1) / totalChunks * 100);
     }
+  }
+
+  private base64ToBinary(base64: string): ArrayBuffer {
+    const binaryString = atob(base64);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    return bytes.buffer;
   }
 
   setupReceiver(
     onProgress: (progress: number) => void,
     onFileReceived: (blob: Blob, fileName: string) => void
   ): void {
-    if (!this.ws) {
-      throw new Error('WebSocket not connected');
-    }
-
-    if (this.ws.readyState !== ReadyState.OPEN) {
-      throw new Error('WebSocket is not open. ReadyState: ' + this.ws.readyState);
+    if (!this.ws || this.ws.readyState !== ReadyState.OPEN) {
+      throw new Error('WebSocket is not connected or not open');
     }
 
     console.log('Setting up file receiver');
-    let metadata: TransferMetadata | null = null;
+    let currentMetadata: TransferMetadata | null = null;
 
-    this.ws.onmessage = (event) => {
-      if (typeof event.data === 'string') {
-        const data = JSON.parse(event.data);
-        if (data.type === 'binary') {
-          console.log('Received binary data as base64');
-          const binaryData = Uint8Array.from(atob(data.data), c => c.charCodeAt(0));
-          if (!metadata) {
-            throw new Error('Received chunk without metadata');
+    this.ws.onmessage = async (event) => {
+      try {
+        if (typeof event.data === 'string') {
+          const data = JSON.parse(event.data);
+          
+          if (data.type === 'binary') {
+            if (!currentMetadata) {
+              throw new Error('Received binary data without metadata');
+            }
+            
+            const binaryData = this.base64ToBinary(data.data);
+            await this.processChunk(binaryData, currentMetadata, onProgress, onFileReceived);
+          } else if (data.fileName) {
+            // This is metadata
+            currentMetadata = data;
+            console.log('Received metadata for chunk:', data.chunkIndex + 1);
           }
-          console.log(`Processing binary chunk ${metadata.chunkIndex + 1}/${metadata.totalChunks}`);
-          this.fileAssembler.addChunk(binaryData.buffer, metadata);
-          onProgress((metadata.chunkIndex + 1) / metadata.totalChunks * 100);
         } else {
-          console.log('Received metadata:', data);
-          metadata = data;
+          // Binary data received directly
+          if (!currentMetadata) {
+            throw new Error('Received binary chunk without metadata');
+          }
+          
+          await this.processChunk(event.data, currentMetadata, onProgress, onFileReceived);
         }
-      } else {
-        if (!metadata) {
-          throw new Error('Received chunk without metadata');
-        }
-        console.log(`Received binary chunk ${metadata.chunkIndex + 1}/${metadata.totalChunks}`);
-        this.fileAssembler.addChunk(event.data, metadata);
-        onProgress((metadata.chunkIndex + 1) / metadata.totalChunks * 100);
-      }
-
-      if (metadata && metadata.chunkIndex === metadata.totalChunks - 1) {
-        console.log('All chunks received, assembling file');
-        const { blob, fileName } = this.fileAssembler.assembleFile();
-        console.log('File assembled:', fileName);
-        onFileReceived(blob, fileName);
+      } catch (error) {
+        console.error('Error processing message:', error);
+        this.fileAssembler.clearIncompleteFiles();
       }
     };
+  }
+
+  private async processChunk(
+    chunk: ArrayBuffer,
+    metadata: TransferMetadata,
+    onProgress: (progress: number) => void,
+    onFileReceived: (blob: Blob, fileName: string) => void
+  ): Promise<void> {
+    this.fileAssembler.addChunk(chunk, metadata);
+    onProgress((metadata.chunkIndex + 1) / metadata.totalChunks * 100);
+
+    if (this.fileAssembler.isFileComplete(metadata)) {
+      try {
+        const { blob, fileName } = this.fileAssembler.assembleFile(metadata);
+        console.log('File assembled successfully:', fileName);
+        onFileReceived(blob, fileName);
+      } catch (error) {
+        console.error('Error assembling file:', error);
+        this.fileAssembler.clearIncompleteFiles();
+        throw error;
+      }
+    }
   }
 
   disconnect(): void {
     if (this.ws) {
       console.log('Disconnecting WebSocket');
+      this.fileAssembler.clearIncompleteFiles();
       this.ws.close();
       this.ws = null;
     }

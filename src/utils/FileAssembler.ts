@@ -5,55 +5,119 @@ interface FileMetadata {
   chunkIndex: number;
 }
 
+interface FileBuffer {
+  chunks: Map<number, ArrayBuffer>;
+  metadata: FileMetadata;
+  totalSize: number;
+  receivedCount: number;
+}
+
 export class FileAssembler {
-  private chunks: ArrayBuffer[] = [];
-  private metadata: FileMetadata | null = null;
-  private totalSize: number = 0;
+  private fileBuffers: Map<string, FileBuffer> = new Map();
 
   constructor() {
-    console.log('FileAssembler initialized');
+    console.log('FileAssembler initialized with chunk sequencing support');
+  }
+
+  private getFileId(metadata: FileMetadata): string {
+    // Create a unique ID for each file transfer using name and total chunks
+    return `${metadata.fileName}-${metadata.totalChunks}`;
   }
 
   addChunk(chunk: ArrayBuffer, metadata: FileMetadata) {
-    console.log(`Adding chunk ${metadata.chunkIndex + 1}/${metadata.totalChunks} for file: ${metadata.fileName}`);
+    const fileId = this.getFileId(metadata);
+    console.log(`Processing chunk ${metadata.chunkIndex + 1}/${metadata.totalChunks} for file: ${metadata.fileName}`);
     console.log(`Chunk size: ${chunk.byteLength} bytes`);
-    
-    this.chunks.push(chunk);
-    this.metadata = metadata;
-    this.totalSize += chunk.byteLength;
-    
-    const progress = (this.chunks.length / metadata.totalChunks) * 100;
-    console.log(`Assembly progress: ${progress.toFixed(2)}%, Total size so far: ${this.totalSize} bytes`);
+
+    // Initialize file buffer if it doesn't exist
+    if (!this.fileBuffers.has(fileId)) {
+      console.log(`Initializing new file buffer for: ${metadata.fileName}`);
+      this.fileBuffers.set(fileId, {
+        chunks: new Map(),
+        metadata: metadata,
+        totalSize: 0,
+        receivedCount: 0
+      });
+    }
+
+    const fileBuffer = this.fileBuffers.get(fileId)!;
+
+    // Only add the chunk if we haven't received it before
+    if (!fileBuffer.chunks.has(metadata.chunkIndex)) {
+      fileBuffer.chunks.set(metadata.chunkIndex, chunk);
+      fileBuffer.totalSize += chunk.byteLength;
+      fileBuffer.receivedCount++;
+
+      console.log(`Chunk ${metadata.chunkIndex + 1} added successfully`);
+      console.log(`Progress: ${(fileBuffer.receivedCount / metadata.totalChunks * 100).toFixed(2)}%`);
+      console.log(`Total size so far: ${fileBuffer.totalSize} bytes`);
+    } else {
+      console.warn(`Duplicate chunk received for index ${metadata.chunkIndex}, ignoring`);
+    }
   }
 
-  assembleFile(): { blob: Blob; fileName: string } {
-    if (!this.metadata) {
-      throw new Error('No metadata available for file assembly');
+  isFileComplete(metadata: FileMetadata): boolean {
+    const fileId = this.getFileId(metadata);
+    const fileBuffer = this.fileBuffers.get(fileId);
+    
+    if (!fileBuffer) {
+      return false;
     }
 
-    console.log(`Starting file assembly for: ${this.metadata.fileName}`);
-    console.log(`MIME type: ${this.metadata.mimeType}`);
-    console.log(`Total chunks to assemble: ${this.metadata.totalChunks}`);
-    console.log(`Current chunks available: ${this.chunks.length}`);
-
-    if (this.chunks.length !== this.metadata.totalChunks) {
-      console.warn(`Warning: Number of chunks (${this.chunks.length}) doesn't match expected count (${this.metadata.totalChunks})`);
+    // Check if we have all chunks
+    if (fileBuffer.receivedCount !== metadata.totalChunks) {
+      return false;
     }
 
-    const blob = new Blob(this.chunks, { type: this.metadata.mimeType });
+    // Verify chunks are in sequence
+    for (let i = 0; i < metadata.totalChunks; i++) {
+      if (!fileBuffer.chunks.has(i)) {
+        console.warn(`Missing chunk at index ${i}`);
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  assembleFile(metadata: FileMetadata): { blob: Blob; fileName: string } {
+    const fileId = this.getFileId(metadata);
+    const fileBuffer = this.fileBuffers.get(fileId);
+
+    if (!fileBuffer) {
+      throw new Error(`No file buffer found for ${metadata.fileName}`);
+    }
+
+    if (!this.isFileComplete(metadata)) {
+      throw new Error(`Cannot assemble incomplete file ${metadata.fileName}`);
+    }
+
+    console.log(`Starting file assembly for: ${metadata.fileName}`);
+    console.log(`MIME type: ${metadata.mimeType}`);
+    console.log(`Total chunks to assemble: ${metadata.totalChunks}`);
+
+    // Convert ordered Map to array
+    const orderedChunks: ArrayBuffer[] = [];
+    for (let i = 0; i < metadata.totalChunks; i++) {
+      orderedChunks.push(fileBuffer.chunks.get(i)!);
+    }
+
+    const blob = new Blob(orderedChunks, { type: metadata.mimeType });
+    
     console.log(`File assembled successfully:`);
     console.log(`- Final size: ${blob.size} bytes`);
-    console.log(`- Chunk count: ${this.chunks.length}`);
-    console.log(`- Average chunk size: ${(blob.size / this.chunks.length).toFixed(2)} bytes`);
-    
-    const fileName = this.metadata.fileName;
-    
-    // Clear the stored chunks and metadata
-    this.chunks = [];
-    this.metadata = null;
-    this.totalSize = 0;
-    console.log('Assembly buffers cleared');
+    console.log(`- Total chunks: ${orderedChunks.length}`);
+    console.log(`- Average chunk size: ${(blob.size / orderedChunks.length).toFixed(2)} bytes`);
 
-    return { blob, fileName };
+    // Clean up the file buffer
+    this.fileBuffers.delete(fileId);
+    console.log(`File buffer cleared for ${metadata.fileName}`);
+
+    return { blob, fileName: metadata.fileName };
+  }
+
+  clearIncompleteFiles() {
+    this.fileBuffers.clear();
+    console.log('Cleared all incomplete file buffers');
   }
 }
