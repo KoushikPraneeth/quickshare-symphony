@@ -14,16 +14,82 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import java.io.IOException;
 import java.util.Map;
 import java.util.Base64;
+import java.util.Queue;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
 
 @Component
 public class TransferHandler extends AbstractWebSocketHandler {
     private final ObjectMapper objectMapper = new ObjectMapper();
     private static final Logger logger = LoggerFactory.getLogger(TransferHandler.class);
     
-    // Separate maps for sender and receiver sessions, keyed by connection ID
-    private final Map<String, WebSocketSession> senderSessions = new ConcurrentHashMap<>();
-    private final Map<String, WebSocketSession> receiverSessions = new ConcurrentHashMap<>();
+    // Map of transfer sessions keyed by connection ID
+    private final Map<String, TransferSession> transferSessions = new ConcurrentHashMap<>();
+
+    private static class TransferSession {
+        WebSocketSession sender;
+        WebSocketSession receiver;
+        Queue<byte[]> chunkQueue = new ConcurrentLinkedQueue<>();
+        
+        public void setSender(WebSocketSession sender) {
+            this.sender = sender;
+            forwardQueuedChunks();
+        }
+        
+        public void setReceiver(WebSocketSession receiver) {
+            this.receiver = receiver;
+            forwardQueuedChunks();
+        }
+        
+        public void addChunk(byte[] chunk) {
+            if (receiver != null && receiver.isOpen()) {
+                // If receiver is connected, send directly
+                try {
+                    sendChunk(chunk);
+                } catch (IOException e) {
+                    // If sending fails, queue the chunk
+                    logger.error("Failed to send chunk directly, queueing instead", e);
+                    chunkQueue.add(chunk);
+                }
+            } else {
+                // If no receiver or receiver is disconnected, queue the chunk
+                chunkQueue.add(chunk);
+            }
+        }
+        
+        private void forwardQueuedChunks() {
+            if (receiver == null || !receiver.isOpen()) return;
+            
+            while (!chunkQueue.isEmpty()) {
+                byte[] chunk = chunkQueue.poll();
+                try {
+                    sendChunk(chunk);
+                } catch (IOException e) {
+                    logger.error("Error forwarding queued chunk", e);
+                    // Re-queue the failed chunk at the front
+                    chunkQueue.offer(chunk);
+                    break;
+                }
+            }
+        }
+
+        private void sendChunk(byte[] chunk) throws IOException {
+            if (receiver == null || !receiver.isOpen()) {
+                throw new IOException("Receiver not connected");
+            }
+
+            // Check if receiver is using SockJS or native WebSocket
+            String transport = receiver.getUri().toString().toLowerCase();
+            if (transport.contains("websocket")) {
+                // Native WebSocket - send binary directly
+                receiver.sendMessage(new BinaryMessage(chunk));
+            } else {
+                // SockJS - send as base64 encoded JSON
+                String base64Data = Base64.getEncoder().encodeToString(chunk);
+                receiver.sendMessage(new TextMessage("{\"type\":\"binary\",\"data\":\"" + base64Data + "\"}"));
+            }
+        }
+    }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     private static class ConnectionMessage {
@@ -65,25 +131,6 @@ public class TransferHandler extends AbstractWebSocketHandler {
         public void setChunkIndex(int chunkIndex) { this.chunkIndex = chunkIndex; }
     }
 
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    private static class BinaryDataMessage {
-        private String type;
-        private String data;
-
-        public BinaryDataMessage() {}
-
-        public BinaryDataMessage(String type, String data) {
-            this.type = type;
-            this.data = data;
-        }
-
-        public String getType() { return type; }
-        public void setType(String type) { this.type = type; }
-
-        public String getData() { return data; }
-        public void setData(String data) { this.data = data; }
-    }
-
     @Override
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
         logger.info("WebSocket connection established. Waiting for connection details...");
@@ -105,25 +152,17 @@ public class TransferHandler extends AbstractWebSocketHandler {
 
             if (payload.contains("\"type\":\"binary\"")) {
                 // Handle base64 encoded binary data
-                BinaryDataMessage binaryMsg = objectMapper.readValue(payload, BinaryDataMessage.class);
-                byte[] binaryData = Base64.getDecoder().decode(binaryMsg.getData());
+                byte[] binaryData = Base64.getDecoder().decode(
+                    objectMapper.readTree(payload).get("data").asText()
+                );
                 handleBinaryData(session, binaryData);
             } else if (payload.contains("\"type\":\"connection\"")) {
                 ConnectionMessage connectionMessage = objectMapper.readValue(payload, ConnectionMessage.class);
-                logger.debug("Deserialized connection message - type: {}, id: {}, role: {}", 
-                    connectionMessage.getType(), 
-                    connectionMessage.getId(), 
-                    connectionMessage.getRole());
                 handleConnectionMessage(session, connectionMessage);
             } else {
                 // Handle file metadata message
-                FileMetadata fileMetadata = objectMapper.readValue(payload, FileMetadata.class);
-                logger.debug("Deserialized file metadata - fileName: {}, mimeType: {}, chunk: {}/{}", 
-                    fileMetadata.getFileName(),
-                    fileMetadata.getMimeType(),
-                    fileMetadata.getChunkIndex(),
-                    fileMetadata.getTotalChunks());
-                handleFileMetadata(session, fileMetadata);
+                FileMetadata metadata = objectMapper.readValue(payload, FileMetadata.class);
+                handleFileMetadata(session, metadata);
             }
         } catch (Exception e) {
             logger.error("Error handling text message", e);
@@ -133,86 +172,51 @@ public class TransferHandler extends AbstractWebSocketHandler {
     }
 
     private void handleBinaryData(WebSocketSession session, byte[] data) throws Exception {
-        try {
-            handleBinaryMessage(session, new BinaryMessage(java.nio.ByteBuffer.wrap(data)));
-        } catch (Exception e) {
-            logger.error("Error handling binary data", e);
-            session.close(CloseStatus.SERVER_ERROR.withReason("Error processing binary data"));
-            throw e;
+        String sessionId = getSessionId(session);
+        TransferSession transferSession = transferSessions.get(sessionId);
+        
+        if (transferSession != null) {
+            transferSession.addChunk(data);
+        } else {
+            logger.warn("No transfer session found for ID: {}", sessionId);
         }
     }
 
     @Override
-    protected void handleBinaryMessage(WebSocketSession session, org.springframework.web.socket.BinaryMessage message) throws Exception {
-        try {
-            String sessionId = getSessionId(session);
-            String role = (String) session.getAttributes().get("role");
-            WebSocketSession pairedSession = null;
-
-            if ("sender".equals(role)) {
-                pairedSession = receiverSessions.get(sessionId);
-            } else if ("receiver".equals(role)) {
-                pairedSession = senderSessions.get(sessionId);
-            }
-
-            if (pairedSession != null && pairedSession.isOpen()) {
-                // Check if paired session is using SockJS or native WebSocket
-                String transport = pairedSession.getUri().toString().toLowerCase();
-                if (transport.contains("websocket")) {
-                    // Native WebSocket - send binary directly
-                    pairedSession.sendMessage(message);
-                } else {
-                    // SockJS - send as base64 encoded JSON
-                    String base64Data = Base64.getEncoder().encodeToString(message.getPayload().array());
-                    pairedSession.sendMessage(new TextMessage(objectMapper.writeValueAsString(
-                        new BinaryDataMessage("binary", base64Data)
-                    )));
-                }
-            } else {
-                logger.warn("No paired session available for session: {}. {} waiting for {}", 
-                    sessionId, role, "sender".equals(role) ? "receiver" : "sender");
-            }
-        } catch (IOException e) {
-            logger.error("Error handling binary message", e);
-            try {
-                session.close(CloseStatus.SERVER_ERROR.withReason("Internal server error"));
-            } catch (IOException ex) {
-                logger.error("Error closing WebSocket session", ex);
-            }
-        }
+    protected void handleBinaryMessage(WebSocketSession session, BinaryMessage message) throws Exception {
+        handleBinaryData(session, message.getPayload().array());
     }
 
     private void handleFileMetadata(WebSocketSession session, FileMetadata metadata) throws IOException {
         String sessionId = getSessionId(session);
-        String role = (String) session.getAttributes().get("role");
-        WebSocketSession pairedSession = null;
-
-        if ("sender".equals(role)) {
-            pairedSession = receiverSessions.get(sessionId);
-        } else if ("receiver".equals(role)) {
-            pairedSession = senderSessions.get(sessionId);
-        }
-
-        if (pairedSession != null && pairedSession.isOpen()) {
-            // Forward the metadata message to the paired session
+        TransferSession transferSession = transferSessions.get(sessionId);
+        
+        if (transferSession != null && transferSession.receiver != null && transferSession.receiver.isOpen()) {
             String metadataJson = objectMapper.writeValueAsString(metadata);
-            pairedSession.sendMessage(new TextMessage(metadataJson));
+            transferSession.receiver.sendMessage(new TextMessage(metadataJson));
             logger.info("File metadata forwarded for session: {}", sessionId);
         } else {
-            logger.warn("No paired session available for session: {}. {} waiting for {}", 
-                sessionId, role, "sender".equals(role) ? "receiver" : "sender");
+            logger.warn("No receiver available for metadata. Session ID: {}", sessionId);
         }
     }
 
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
         String sessionId = getSessionId(session);
-        String role = (String) session.getAttributes().get("role");
         if (sessionId != null) {
-            if ("sender".equals(role)) {
-                senderSessions.remove(sessionId);
-            } else if ("receiver".equals(role)) {
-                receiverSessions.remove(sessionId);
+            TransferSession transferSession = transferSessions.get(sessionId);
+            if (transferSession != null) {
+                String role = (String) session.getAttributes().get("role");
+                if ("sender".equals(role)) {
+                    transferSession.sender = null;
+                } else {
+                    transferSession.receiver = null;
+                }
+                
+                // Remove the transfer session if both sender and receiver are disconnected
+                if (transferSession.sender == null && transferSession.receiver == null) {
+                    transferSessions.remove(sessionId);
+                }
             }
             logger.info("Connection closed for ID: {}. Status: {}", sessionId, status);
         }
@@ -220,30 +224,26 @@ public class TransferHandler extends AbstractWebSocketHandler {
 
     private void handleConnectionMessage(WebSocketSession session, ConnectionMessage message) {
         try {
-            String connectionId = message.id;
-            String role = message.role;
+            String connectionId = message.getId();
+            String role = message.getRole();
 
-            // Store the connection ID and role in the session attributes for later use
+            // Store the connection ID and role in the session attributes
             session.getAttributes().put("connectionId", connectionId);
             session.getAttributes().put("role", role);
 
-            // Store session in the appropriate map based on its role
+            // Get or create transfer session
+            TransferSession transferSession = transferSessions.computeIfAbsent(
+                connectionId, 
+                k -> new TransferSession()
+            );
+
+            // Update the transfer session with the new connection
             if ("sender".equals(role)) {
-                senderSessions.put(connectionId, session);
+                transferSession.setSender(session);
                 logger.info("Sender connected with ID: {}", connectionId);
-
-                // If a receiver is already waiting for this sender, log the pairing event
-                if (receiverSessions.containsKey(connectionId)) {
-                    logger.info("Pairing complete. Receiver found for sender ID: {}", connectionId);
-                }
             } else if ("receiver".equals(role)) {
-                receiverSessions.put(connectionId, session);
+                transferSession.setReceiver(session);
                 logger.info("Receiver connected with ID: {}", connectionId);
-
-                // If a sender is already connected, log the pairing event
-                if (senderSessions.containsKey(connectionId)) {
-                    logger.info("Pairing complete. Sender found for receiver ID: {}", connectionId);
-                }
             }
         } catch (Exception e) {
             logger.error("Error handling connection message", e);
