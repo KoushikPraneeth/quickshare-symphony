@@ -1,9 +1,16 @@
 export class FileSplitter {
-  private static readonly CHUNK_SIZE = 8192; // 8KB chunks
-  private static readonly MAX_CHUNKS = 10000; // Safety limit
+  private static readonly DEFAULT_CHUNK_SIZE = 1024; // 1KB default chunk size
+  private static readonly MIN_CHUNK_SIZE = 256; // 256 bytes minimum
+  private static readonly MAX_CHUNKS = 1000000; // Increased for smaller chunks
+  private static readonly BACKOFF_FACTOR = 0.75; // Reduce chunk size by 25% on failure
+
+  private currentChunkSize: number;
+  private activeTransfers: Set<string>;
 
   constructor() {
-    console.log(`FileSplitter initialized with chunk size: ${FileSplitter.CHUNK_SIZE} bytes`);
+    this.currentChunkSize = FileSplitter.DEFAULT_CHUNK_SIZE;
+    this.activeTransfers = new Set();
+    console.log(`FileSplitter initialized with chunk size: ${this.currentChunkSize} bytes`);
   }
 
   private validateFile(file: File): void {
@@ -15,7 +22,7 @@ export class FileSplitter {
       throw new Error('File is empty');
     }
 
-    const estimatedChunks = Math.ceil(file.size / FileSplitter.CHUNK_SIZE);
+    const estimatedChunks = Math.ceil(file.size / this.currentChunkSize);
     if (estimatedChunks > FileSplitter.MAX_CHUNKS) {
       throw new Error(
         `File too large. Would require ${estimatedChunks} chunks, ` +
@@ -27,22 +34,27 @@ export class FileSplitter {
     console.log(`- Name: ${file.name}`);
     console.log(`- Size: ${file.size} bytes`);
     console.log(`- Type: ${file.type}`);
-    console.log(`- Last modified: ${new Date(file.lastModified).toISOString()}`);
+    console.log(`- Estimated chunks: ${estimatedChunks}`);
+    console.log(`- Current chunk size: ${this.currentChunkSize} bytes`);
   }
 
   async splitFile(file: File): Promise<ArrayBuffer[]> {
     try {
       this.validateFile(file);
-
-      const totalChunks = Math.ceil(file.size / FileSplitter.CHUNK_SIZE);
-      console.log(`Splitting file into ${totalChunks} chunks`);
+      
+      // Add file to active transfers
+      const transferId = `${file.name}-${file.size}-${Date.now()}`;
+      this.activeTransfers.add(transferId);
 
       const chunks: ArrayBuffer[] = [];
       let offset = 0;
       let chunkIndex = 0;
+      let consecutiveFailures = 0;
 
-      while (offset < file.size) {
-        const chunk = file.slice(offset, offset + FileSplitter.CHUNK_SIZE);
+      while (offset < file.size && this.activeTransfers.has(transferId)) {
+        const end = Math.min(offset + this.currentChunkSize, file.size);
+        const chunk = file.slice(offset, end);
+
         try {
           const arrayBuffer = await this.readChunkAsArrayBuffer(chunk);
           
@@ -52,20 +64,43 @@ export class FileSplitter {
           }
 
           chunks.push(arrayBuffer);
+          console.log(`Chunk ${chunkIndex + 1} processed: ${arrayBuffer.byteLength} bytes`);
 
-          console.log(`Chunk ${chunkIndex + 1}/${totalChunks} processed:`);
-          console.log(`- Offset: ${offset}`);
-          console.log(`- Size: ${arrayBuffer.byteLength} bytes`);
+          // Reset consecutive failures on success
+          if (consecutiveFailures > 0) {
+            consecutiveFailures = 0;
+            // Gradually increase chunk size on success
+            this.increaseChunkSize();
+          }
 
-          offset += FileSplitter.CHUNK_SIZE;
+          offset = end;
           chunkIndex++;
 
           const progress = (offset / file.size) * 100;
           console.log(`Splitting progress: ${progress.toFixed(2)}%`);
         } catch (error) {
           console.error(`Error processing chunk at offset ${offset}:`, error);
-          throw new Error(`Failed to process chunk at offset ${offset}: ${error.message}`);
+          
+          consecutiveFailures++;
+          if (consecutiveFailures >= 3) {
+            // Reduce chunk size after multiple failures
+            if (!this.reduceChunkSize()) {
+              throw new Error('Cannot reduce chunk size further, transfer failed');
+            }
+            consecutiveFailures = 0;
+            continue; // Retry with smaller chunk size
+          }
+
+          // Retry current chunk
+          console.log(`Retrying chunk at offset ${offset}`);
+          await new Promise(resolve => setTimeout(resolve, 1000 * consecutiveFailures));
+          continue;
         }
+      }
+
+      // Check if transfer was cancelled
+      if (!this.activeTransfers.has(transferId)) {
+        throw new Error('File transfer was cancelled');
       }
 
       // Validate final result
@@ -80,9 +115,10 @@ export class FileSplitter {
       console.log('File splitting completed successfully:');
       console.log(`- Total chunks created: ${chunks.length}`);
       console.log(`- Total size: ${totalSize} bytes`);
-      console.log(`- Average chunk size: ${(totalSize / chunks.length).toFixed(2)} bytes`);
-      console.log(`- Last chunk size: ${chunks[chunks.length - 1].byteLength} bytes`);
+      console.log(`- Final chunk size used: ${this.currentChunkSize} bytes`);
 
+      // Clean up
+      this.activeTransfers.delete(transferId);
       return chunks;
     } catch (error) {
       console.error('Error splitting file:', error);
@@ -125,5 +161,36 @@ export class FileSplitter {
         reject(error);
       }
     });
+  }
+
+  private reduceChunkSize(): boolean {
+    const newSize = Math.floor(this.currentChunkSize * FileSplitter.BACKOFF_FACTOR);
+    if (newSize >= FileSplitter.MIN_CHUNK_SIZE) {
+      this.currentChunkSize = newSize;
+      console.log(`Reduced chunk size to ${this.currentChunkSize} bytes`);
+      return true;
+    }
+    console.warn(`Cannot reduce chunk size below minimum of ${FileSplitter.MIN_CHUNK_SIZE} bytes`);
+    return false;
+  }
+
+  private increaseChunkSize(): void {
+    const newSize = Math.min(
+      Math.floor(this.currentChunkSize / FileSplitter.BACKOFF_FACTOR),
+      FileSplitter.DEFAULT_CHUNK_SIZE
+    );
+    if (newSize !== this.currentChunkSize) {
+      this.currentChunkSize = newSize;
+      console.log(`Increased chunk size to ${this.currentChunkSize} bytes`);
+    }
+  }
+
+  cancelTransfer(fileName: string): void {
+    for (const transferId of this.activeTransfers) {
+      if (transferId.startsWith(fileName)) {
+        this.activeTransfers.delete(transferId);
+        console.log(`Cancelled transfer for ${fileName}`);
+      }
+    }
   }
 }
