@@ -3,12 +3,10 @@ import React, { useState, useEffect } from 'react';
 import { webSocketService } from '@/services/WebSocketService';
 import { toast } from 'sonner';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Button } from '@/components/ui/button';
-import { Progress } from '@/components/ui/progress';
-import { AlertTriangle, Loader2, Pause, Play, StopCircle } from 'lucide-react';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { formatFileSize } from '@/utils/formatters';
+import { Loader2 } from 'lucide-react';
+import { ConnectionForm } from '@/components/receive/ConnectionForm';
+import { TransferProgress } from '@/components/receive/TransferProgress';
+import { ErrorDisplay } from '@/components/receive/ErrorDisplay';
 
 const Receive = () => {
   const [connectionId, setConnectionId] = useState('');
@@ -131,86 +129,25 @@ const Receive = () => {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          {error && (
-            <Alert variant="destructive">
-              <AlertTriangle className="h-4 w-4" />
-              <AlertTitle>Error</AlertTitle>
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          )}
+          <ErrorDisplay error={error || ''} />
           
           {!isConnected ? (
-            <div className="space-y-4">
-              <Input
-                placeholder="Enter connection ID"
-                value={connectionId}
-                onChange={(e) => setConnectionId(e.target.value)}
-                disabled={isConnecting}
-              />
-              <Button 
-                className="w-full" 
-                onClick={handleConnect}
-                disabled={isConnecting}
-              >
-                {isConnecting ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Connecting...
-                  </>
-                ) : (
-                  'Connect'
-                )}
-              </Button>
-            </div>
+            <ConnectionForm
+              connectionId={connectionId}
+              onConnectionIdChange={setConnectionId}
+              onConnect={handleConnect}
+              isConnecting={isConnecting}
+            />
           ) : (
-            <div className="space-y-4">
-              <div className="p-4 bg-muted rounded-lg">
-                <p className="text-center">
-                  {currentFileName 
-                    ? `Receiving: ${currentFileName} (${currentFileSize ? formatFileSize(currentFileSize) : 'Unknown size'})` 
-                    : 'Connected! Waiting for file...'}
-                </p>
-              </div>
-              {isTransferring && (
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-muted-foreground">
-                      {progress.toFixed(1)}% Complete
-                    </span>
-                    <div className="space-x-2">
-                      <Button
-                        variant={isPaused ? "default" : "secondary"}
-                        size="sm"
-                        onClick={handlePauseResume}
-                        className="transition-colors duration-200"
-                      >
-                        {isPaused ? (
-                          <>
-                            <Play className="h-4 w-4 mr-1" />
-                            Resume
-                          </>
-                        ) : (
-                          <>
-                            <Pause className="h-4 w-4 mr-1" />
-                            Pause
-                          </>
-                        )}
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={handleCancel}
-                        disabled={!isTransferring}
-                      >
-                        <StopCircle className="h-4 w-4 mr-1" />
-                        Cancel
-                      </Button>
-                    </div>
-                  </div>
-                  <Progress value={progress} className="w-full" />
-                </div>
-              )}
-            </div>
+            <TransferProgress
+              currentFileName={currentFileName}
+              currentFileSize={currentFileSize}
+              progress={progress}
+              isPaused={isPaused}
+              isTransferring={isTransferring}
+              onPauseResume={handlePauseResume}
+              onCancel={handleCancel}
+            />
           )}
         </CardContent>
       </Card>
