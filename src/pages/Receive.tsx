@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { webSocketService } from '@/services/WebSocketService';
 import { toast } from 'sonner';
@@ -5,17 +6,20 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
-import { AlertTriangle, Pause, Play, StopCircle } from 'lucide-react';
+import { AlertTriangle, Loader2, Pause, Play, StopCircle } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { formatFileSize } from '@/utils/formatters';
 
 const Receive = () => {
   const [connectionId, setConnectionId] = useState('');
   const [progress, setProgress] = useState(0);
   const [isConnected, setIsConnected] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [isTransferring, setIsTransferring] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [currentFileName, setCurrentFileName] = useState<string | null>(null);
+  const [currentFileSize, setCurrentFileSize] = useState<number | null>(null);
 
   useEffect(() => {
     return () => {
@@ -32,27 +36,24 @@ const Receive = () => {
       }
 
       setError(null);
+      setIsConnecting(true);
       console.log('Connecting as receiver with ID:', connectionId);
 
-      // Connect WebSocket as receiver
       await webSocketService.connectWebSocket(connectionId, 'receiver');
       
-      // Setup receiver to handle incoming file chunks
       webSocketService.setupReceiver(
-        // Progress callback
         (progress) => {
           setProgress(progress);
           setIsTransferring(true);
           console.log(`Transfer progress: ${progress.toFixed(1)}%`);
         },
-        // File received callback
         (blob, fileName) => {
           console.log(`File received: ${fileName} (${blob.size} bytes)`);
           setIsTransferring(false);
           setProgress(100);
           setCurrentFileName(null);
+          setCurrentFileSize(null);
           
-          // Create download link
           const url = URL.createObjectURL(blob);
           const a = document.createElement('a');
           a.href = url;
@@ -63,6 +64,12 @@ const Receive = () => {
           URL.revokeObjectURL(url);
           
           toast.success(`File "${fileName}" received successfully!`);
+        },
+        (metadata) => {
+          if (metadata.fileName && metadata.fileSize) {
+            setCurrentFileName(metadata.fileName);
+            setCurrentFileSize(metadata.fileSize);
+          }
         }
       );
 
@@ -75,12 +82,13 @@ const Receive = () => {
       setError(errorMessage);
       toast.error(errorMessage);
       setIsConnected(false);
+    } finally {
+      setIsConnecting(false);
     }
   };
 
   const handlePauseResume = () => {
     try {
-      // TODO: Implement pause/resume functionality
       setIsPaused(!isPaused);
       console.log(`Transfer ${isPaused ? 'resumed' : 'paused'}`);
       toast.info(`Transfer ${isPaused ? 'resumed' : 'paused'}`);
@@ -99,6 +107,7 @@ const Receive = () => {
       setIsPaused(false);
       setIsConnected(false);
       setCurrentFileName(null);
+      setCurrentFileSize(null);
       setError(null);
       toast.info('Transfer cancelled');
     } catch (error) {
@@ -107,11 +116,25 @@ const Receive = () => {
     }
   };
 
+  const getConnectionStatus = () => {
+    if (isConnecting) return { message: 'Connecting...', color: 'text-blue-500' };
+    if (isConnected) return { message: 'Connected', color: 'text-green-500' };
+    return { message: 'Disconnected', color: 'text-red-500' };
+  };
+
+  const status = getConnectionStatus();
+
   return (
     <div className="container mx-auto max-w-2xl p-4">
       <Card>
         <CardHeader>
-          <CardTitle>Receive File</CardTitle>
+          <CardTitle className="flex items-center justify-between">
+            <span>Receive File</span>
+            <span className={`text-sm ${status.color} flex items-center gap-2`}>
+              {isConnecting && <Loader2 className="h-4 w-4 animate-spin" />}
+              {status.message}
+            </span>
+          </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           {error && (
@@ -128,12 +151,21 @@ const Receive = () => {
                 placeholder="Enter connection ID"
                 value={connectionId}
                 onChange={(e) => setConnectionId(e.target.value)}
+                disabled={isConnecting}
               />
               <Button 
                 className="w-full" 
                 onClick={handleConnect}
+                disabled={isConnecting}
               >
-                Connect
+                {isConnecting ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Connecting...
+                  </>
+                ) : (
+                  'Connect'
+                )}
               </Button>
             </div>
           ) : (
@@ -141,7 +173,7 @@ const Receive = () => {
               <div className="p-4 bg-muted rounded-lg">
                 <p className="text-center">
                   {currentFileName 
-                    ? `Receiving: ${currentFileName}` 
+                    ? `Receiving: ${currentFileName} (${currentFileSize ? formatFileSize(currentFileSize) : 'Unknown size'})` 
                     : 'Connected! Waiting for file...'}
                 </p>
               </div>
@@ -153,19 +185,30 @@ const Receive = () => {
                     </span>
                     <div className="space-x-2">
                       <Button
-                        variant="outline"
+                        variant={isPaused ? "default" : "secondary"}
                         size="sm"
                         onClick={handlePauseResume}
+                        className="transition-colors duration-200"
                       >
-                        {isPaused ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />}
-                        {isPaused ? 'Resume' : 'Pause'}
+                        {isPaused ? (
+                          <>
+                            <Play className="h-4 w-4 mr-1" />
+                            Resume
+                          </>
+                        ) : (
+                          <>
+                            <Pause className="h-4 w-4 mr-1" />
+                            Pause
+                          </>
+                        )}
                       </Button>
                       <Button
                         variant="outline"
                         size="sm"
                         onClick={handleCancel}
+                        disabled={!isTransferring}
                       >
-                        <StopCircle className="h-4 w-4" />
+                        <StopCircle className="h-4 w-4 mr-1" />
                         Cancel
                       </Button>
                     </div>
