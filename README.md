@@ -1,6 +1,9 @@
 # QuickShare Symphony
 
 QuickShare Symphony is a real-time file sharing application that enables seamless file transfers between users through WebSocket connections. Built with modern web technologies and a robust backend, it provides a reliable and efficient way to share files with real-time progress tracking and automatic error recovery.
+![image](https://github.com/user-attachments/assets/42f8b407-5151-41cc-b973-6ac414c0f4ce)
+![image](https://github.com/user-attachments/assets/085d231d-4770-479a-9886-0db42473256c)
+
 
 ## Features
 
