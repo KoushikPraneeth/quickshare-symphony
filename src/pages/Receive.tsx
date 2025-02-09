@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { webSocketService } from '@/services/WebSocketService';
 import { toast } from 'sonner';
@@ -38,7 +39,7 @@ const Receive = () => {
       setIsConnecting(true);
       console.log('Connecting as receiver with ID:', connectionId);
 
-      await webSocketService.connectWebSocket(connectionId);
+      await webSocketService.connectWebSocket(connectionId, 'receiver');
       
       webSocketService.setupReceiver(
         (progress) => {
