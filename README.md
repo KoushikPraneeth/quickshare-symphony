@@ -1,148 +1,204 @@
 # QuickShare Symphony
 
-A real-time file sharing application that enables fast and reliable transfer of files of any size using WebSocket streaming.
+QuickShare Symphony is a real-time file sharing application that enables seamless file transfers between users through WebSocket connections. Built with modern web technologies and a robust backend, it provides a reliable and efficient way to share files with real-time progress tracking and automatic error recovery.
 
 ## Features
 
-- **Large File Support**: Can handle files of any size (even 50GB+) through efficient streaming
-- **Memory Efficient**: Uses File.slice() for streaming chunks, keeping memory usage constant
-- **Reliable Transfer**: 
-  - Automatic retry on failures
-  - Connection recovery
-  - Progress tracking
-  - Data integrity verification
-- **Adaptive Performance**:
-  - Dynamic chunk size adjustment
-  - Network condition monitoring
-  - Backoff strategy for retries
+- 🚀 Real-time file transfer with progress tracking
+- 📦 Chunk-based file handling for reliable transfers
+- 🔄 Automatic reconnection and error recovery
+- ⚡ WebSocket with SockJS fallback support
+- 📱 Responsive design for all devices
+- 🛡️ Secure file transfer protocol
+- 🎯 Progress tracking and status updates
 
-## How It Works
+## Technical Architecture
 
-The file transfer process works like cutting and sending pieces of a sugarcane:
+### Frontend Stack
 
-1. **File Splitting (FileSplitter.ts)**:
-   - File is split into 1KB chunks using File.slice()
-   - Only one chunk is loaded in memory at a time
-   - Chunks are streamed sequentially
-   - Automatic chunk size adjustment if network issues occur
+- **React + TypeScript**: Modern frontend development with type safety
+- **Vite**: Next-generation frontend tooling
+- **shadcn/ui**: High-quality UI components
+- **WebSocket**: Real-time communication with automatic fallback
+- **File Processing**: Efficient chunk-based file handling
 
-2. **Transfer (WebSocketService.ts)**:
-   - Each chunk is sent with its metadata
-   - Progress is tracked in real-time
-   - Failed chunks are automatically retried
-   - Lost connections are recovered
+### Backend Stack
 
-3. **Assembly (FileAssembler.ts)**:
-   - Chunks are received and validated
-   - Progress is tracked
-   - Chunks are assembled in correct order
-   - Final file is verified for integrity
+- **Spring Boot**: Robust Java-based backend
+- **WebSocket**: Native WebSocket support with SockJS fallback
+- **Session Management**: Sophisticated transfer session handling
+- **Concurrent Processing**: Thread-safe file transfer handling
 
-## Technical Details
+## Installation & Setup
 
-### Core Components
+### Prerequisites
 
-1. **FileSplitter**:
-```typescript
-async *createFileStream(file: File, options?: StreamOptions)
-```
-- Streams file chunks using File.slice()
-- Handles chunk size optimization
-- Reports progress
+- Node.js (v18+)
+- Java Development Kit (JDK) 17+
+- Maven
 
-2. **WebSocketService**:
-```typescript
-async sendFile(file: File, onProgress: (progress: number) => void)
-```
-- Manages WebSocket connection
-- Handles chunk transmission
-- Provides progress updates
-- Manages retries and reconnection
+### Frontend Setup
 
-3. **FileAssembler**:
-```typescript
-addChunk(chunk: ArrayBuffer, metadata: FileMetadata)
-```
-- Manages chunk assembly
-- Verifies file integrity
-- Handles out-of-order chunks
-
-### Key Features
-
-1. **Streaming Implementation**:
-   - No full file loading into memory
-   - Constant memory usage regardless of file size
-   - Progressive chunk processing
-
-2. **Error Handling**:
-   - Automatic retry on chunk failure
-   - Dynamic chunk size adjustment
-   - Connection recovery
-   - Data validation
-
-3. **Performance Optimization**:
-   - Adaptive chunk sizing
-   - Connection quality monitoring
-   - Efficient binary data handling
-
-## Setup and Installation
-
-1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/quickshare-symphony.git
-cd quickshare-symphony
-```
-
-2. Install dependencies:
-```bash
+# Install dependencies
 npm install
-```
 
-3. Start the development server:
-```bash
+# Start development server
 npm run dev
 ```
 
 ### Backend Setup
 
-1. Navigate to the backend directory:
 ```bash
 cd quickshare
-```
 
-2. Run the Spring Boot application:
-```bash
+# Build the project
+./mvnw clean install
+
+# Run the application
 ./mvnw spring-boot:run
 ```
 
-## Development
+## Usage Guide
 
-### Frontend Stack
-- React + TypeScript
-- Vite
-- WebSocket API
-- File API
-- ArrayBuffer for binary data handling
+### Starting the Application
 
-### Backend Stack
-- Spring Boot
-- WebSocket
-- Java Concurrency
+1. Start the backend server
+2. Launch the frontend application
+3. Access the application at `http://localhost:5173`
+
+### Sending Files
+
+1. Open the "Send" page
+2. Select file(s) to transfer
+3. Share the generated connection ID with the recipient
+4. Monitor transfer progress in real-time
+
+### Receiving Files
+
+1. Open the "Receive" page
+2. Enter the connection ID provided by the sender
+3. Wait for the transfer to complete
+4. Files will be automatically saved
+
+## Implementation Details
+
+### File Transfer Protocol
+
+The application implements a sophisticated file transfer protocol:
+
+1. **Connection Establishment**
+
+   - WebSocket connection with fallback to SockJS
+   - Unique connection IDs for session management
+   - Sender/Receiver role assignment
+
+2. **File Processing**
+
+   - Chunk-based file splitting (FileSplitter)
+   - Dynamic chunk size adjustment
+   - Progress tracking per chunk
+
+3. **Data Transfer**
+
+   - Binary data transmission
+   - Metadata synchronization
+   - Order preservation
+   - Error detection and recovery
+
+4. **File Assembly**
+   - Ordered chunk collection
+   - Integrity verification
+   - MIME type preservation
+   - Automatic cleanup
+
+### WebSocket Communication
+
+```typescript
+// Connection Format
+{
+  type: "connection",
+  id: string,
+  role: "sender" | "receiver"
+}
+
+// Metadata Format
+{
+  fileName: string,
+  mimeType: string,
+  totalChunks: number,
+  chunkIndex: number
+}
+```
+
+### Error Handling
+
+The system implements comprehensive error handling:
+
+- Automatic reconnection with exponential backoff
+- Chunk size adjustment for buffer limitations
+- Duplicate chunk detection
+- Missing chunk verification
+- Session state recovery
+
+## Development Guide
+
+### Key Components
+
+1. **WebSocketService**
+
+   - Core communication handler
+   - Connection management
+   - Transfer coordination
+
+2. **FileSplitter**
+
+   - File chunking
+   - Stream processing
+   - Progress tracking
+
+3. **FileAssembler**
+
+   - Chunk assembly
+   - Order management
+   - File reconstruction
+
+4. **TransferHandler (Backend)**
+   - Session management
+   - Binary data handling
+   - Client coordination
+
+### Project Structure
+
+```
+├── src/
+│   ├── components/         # React components
+│   ├── services/          # Core services
+│   ├── utils/             # Utility functions
+│   └── pages/             # Application pages
+│
+├── quickshare/
+│   └── src/
+│       └── main/
+│           └── java/      # Backend implementation
+```
+
+## Performance Considerations
+
+- Adaptive chunk sizing for optimal performance
+- Buffer management to prevent memory issues
+- Concurrent session handling
+- Efficient binary data processing
+- Automatic resource cleanup
 
 ## Contributing
 
 1. Fork the repository
-2. Create your feature branch: `git checkout -b feature/amazing-feature`
-3. Commit your changes: `git commit -m 'Add amazing feature'`
-4. Push to the branch: `git push origin feature/amazing-feature`
-5. Open a Pull Request
+2. Create a feature branch
+3. Commit your changes
+4. Push to the branch
+5. Create a Pull Request
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Acknowledgments
-
-- Inspired by the need for efficient large file transfer
-- Built with modern web technologies
-- Uses efficient streaming techniques similar to video streaming
+This project is licensed under the MIT License.
